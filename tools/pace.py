@@ -84,6 +84,13 @@ def typical(points):
     return round(statistics.mean(recent), 1)
 
 
+def every(window, cost):
+    """How often one more task of that cost comes free, as the even line
+    falls 100 points over the window's length."""
+    minutes = cost / 100 * LENGTH[window.split("_")[1]] / 60
+    return f"{minutes:.0f} min" if minutes < 90 else f"{minutes / 60:.1f} h"
+
+
 def standing(row):
     """{window: (left, even, spare)} for each window the row has a reset for."""
     taken = moment(row["time"])
@@ -146,10 +153,11 @@ def main():
             print(f"  {kind:<8} no paired task yet; {window} has {spare} to spare")
         elif sum(seen):
             cost = statistics.mean(seen)
-            print(f"  {kind:<8} {spare // cost:g} more on pace ({window}, "
-                  f"{cost:.2f} a task over {len(seen)})")
+            print(f"  {kind:<8} {spare // cost:g} more now, then one every "
+                  f"{every(window, cost)} ({window}, {cost:.2f} a task over {len(seen)})")
         else:
-            print(f"  {kind:<8} at least {spare * len(seen)} more on pace ({window}, "
+            print(f"  {kind:<8} at least {spare * len(seen)} more now, then one every "
+                  f"{every(window, 1 / len(seen))} at most ({window}, "
                   f"{len(seen)} tasks moved it nought)")
 
 
