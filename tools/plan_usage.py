@@ -14,6 +14,9 @@ A plan's limit counts every call made on it, whoever made it, so this reads ever
   2026-09-27). Pi's own `anthropic` provider bypasses Claude Code and is read from Pi.
 - Codex: ~/.codex/sessions rollouts, whose token_count events carry a running total, so a call is the rise in it; and Pi's
   `openai-codex` provider, which talks to the plan directly and leaves nothing in ~/.codex.
+- Pi's side calls, which are not messages: compactions (see pi()), recorded on a `compaction` line, or not at all when the
+  claude-bridge ran one, and then estimated; and pi-hermes-memory's reviews, recorded nowhere and estimated (reviews()).
+  An estimated source says `(est.)`.
 - agy: ~/.gemini/antigravity-cli/conversations, one SQLite file a conversation. A model call is a gen_metadata row, and its
   time is that of the matching model-response step (step_type 15, one a row, in order).
 
@@ -101,16 +104,110 @@ def codex(since):
     return out
 
 
-def pi(since):
-    """Pi's calls straight to a plan, not through a bridge."""
-    plans = {"anthropic": "claude", "openai-codex": "codex"}
-    for _, row in lines(".pi/agent/sessions/*/*.jsonl", since):
+def compaction_model():
+    """(provider, model) of ~/.pi/agent/extensions/custom-compaction.ts, which reads `compaction.model` from Pi's settings."""
+    try:
+        named = json.loads((HOME / ".pi/agent/settings.json").read_text(encoding="utf-8"))["compaction"]["model"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    provider, _, model = named.partition("/")
+    return provider, model
+
+
+def hermes_model():
+    """(provider, model) pi-hermes-memory's reviews run on: llmModelOverride in ~/.pi/agent/hermes-memory-config.json."""
+    try:
+        named = json.loads((HOME / ".pi/agent/hermes-memory-config.json").read_text(encoding="utf-8"))["llmModelOverride"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    provider, _, model = named.partition("/")
+    return provider, model
+
+
+# pi-hermes-memory reviews a session every 10 turns or 15 tool calls, once it has 3 user messages (its constants.ts and
+# handlers/background-review.ts), with one in-process complete() that nothing records. What it sends is every message of
+# the branch, text blocks only, each cut to 500 characters (types.ts getMessageText), under a prompt holding the memory
+# files. The prompt and the answer are guesses; the messages are counted. A long session's branch outgrows the model:
+# gpt-6 and gpt-5.6 take 922,000 input tokens at most (developers.openai.com/api/docs/models), so a review past that is
+# refused unbilled, and on 2026-09-27 327 of 335 were.
+REVIEW_TURNS, REVIEW_TOOLS, REVIEW_USERS, REVIEW_CUT = 10, 15, 3, 500
+REVIEW_PROMPT, REVIEW_ANSWER, REVIEW_MOST = 3000, 500, 922_000
+
+
+def text_of(message):
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str))
+    return ""
+
+
+def reviews(path, rows, hermes):
+    """The hermes reviews one session file's messages would have set off, as estimated calls."""
+    chars = turns = tools = users = 0
+    for row in rows:
         message = row.get("message")
+        if row.get("type") != "message" or not isinstance(message, dict):
+            continue
+        chars += min(len(text_of(message)), REVIEW_CUT) + 14  # and its "[ASSISTANT]: " prefix
+        users += message.get("role") == "user"
+        if message.get("role") != "assistant":
+            continue
+        turns += 1
+        content = message.get("content")
+        tools += sum(1 for b in content if isinstance(b, dict) and b.get("type") == "toolCall") if isinstance(content, list) else 0
+        if (turns >= REVIEW_TURNS or tools >= REVIEW_TOOLS) and users >= REVIEW_USERS:
+            turns = tools = 0
+            if REVIEW_PROMPT + chars // 4 > REVIEW_MOST:
+                continue
+            yield Call(when(row["timestamp"]), "codex" if hermes[0] == "openai-codex" else "claude", "hermes review (est.)",
+                       hermes[1], REVIEW_PROMPT + chars // 4, 0, 0, 0, REVIEW_ANSWER)
+
+
+def pi(since):
+    """Pi's calls straight to a plan, and its compactions, which are not messages.
+
+    A compaction is a `compaction` line, and one of three things ran it:
+    - custom-compaction.ts (fromHook, usage recorded): the model in settings' compaction.model, read as it is now, since
+      nothing records what it was then;
+    - Pi's own (not fromHook, usage recorded): the session's model at the time;
+    - the claude-bridge's takeover (fromHook, usage all nought): a Claude Code child with persistSession false, so it is in
+      neither ~/.claude nor Pi's usage. Its tokens are estimated: tokensBefore read uncached, and the summary at four
+      characters a token. Claude Code may write that prompt to a cache at up to 2x input, so this is low if anything.
+    """
+    plans = {"anthropic": "claude", "openai-codex": "codex", "claude-bridge": "claude"}
+    hook, hermes = compaction_model(), hermes_model()
+    current = {}  # session file -> (provider, model) last used
+    session = collections.defaultdict(list)
+    for path, row in lines(".pi/agent/sessions/*/*.jsonl", since):
+        session[path].append(row)
+        message = row.get("message")
+        if row.get("type") == "model_change":
+            current[path] = row.get("provider"), row.get("modelId")
+        elif isinstance(message, dict) and message.get("role") == "assistant" and message.get("provider"):
+            current[path] = message["provider"], message.get("model")
+        if row.get("type") == "compaction":
+            usage = row.get("usage") or {}
+            if usage.get("totalTokens"):
+                provider, model = hook if row.get("fromHook") and hook else current.get(path, (None, None))
+                if provider in plans and provider != "claude-bridge":
+                    yield Call(when(row["timestamp"]), plans[provider], "pi compaction", model, usage.get("input", 0),
+                               usage.get("cacheRead", 0), usage.get("cacheWrite", 0), 0, usage.get("output", 0))
+            elif row.get("fromHook") and current.get(path, (None,))[0] == "claude-bridge":
+                yield Call(when(row["timestamp"]), "claude", "pi compaction (est.)", current[path][1],
+                           int(row.get("tokensBefore") or 0), 0, 0, 0, len(row.get("summary") or "") // 4)
+            continue
         if not isinstance(message, dict) or message.get("provider") not in plans or "usage" not in message:
             continue
+        if message["provider"] == "claude-bridge":
+            continue  # the same call is in ~/.claude, as entrypoint sdk-ts
         usage = message["usage"]
         yield Call(message["timestamp"] / 1000, plans[message["provider"]], "pi", message.get("model", "?"),
                    usage.get("input", 0), usage.get("cacheRead", 0), usage.get("cacheWrite", 0), 0, usage.get("output", 0))
+    if hermes and hermes[0] in plans:
+        for path, rows in session.items():
+            yield from reviews(path, rows, hermes)
 
 
 def protobuf(data):
