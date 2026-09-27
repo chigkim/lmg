@@ -9,6 +9,7 @@ memory for the one request and never printed or stored; a tiny Haiku call is
 the fallback when that token has expired. The three run at once.
 """
 
+import csv
 import json
 import pathlib
 import re
@@ -41,19 +42,26 @@ def when(epoch):
 WEEK = 7 * 24 * 3600
 
 
-def line(label, used, resets):
+class Window(str):
+    """A printed window line that keeps its figures for the ledger."""
+
+
+def line(label, used, resets, indent="  "):
     """One window. A weekly one also says how it stands against an even
     pace -- what would be left now if the week were spent evenly -- since a
     week used up early is days out of commission, and a high % left early
     in the week is not room to spare."""
     left = max(0, 100 - round(used))
-    text = f"  {label:<14}{left:>3}% left (resets {when(resets)})"
+    text = f"{indent}{label:<14}{left:>3}% left (resets {when(resets)})"
     if label.startswith("Weekly"):
         even = round(100 * min(max(resets - time.time(), 0), WEEK) / WEEK)
         margin = left - even
         text += (f"; even pace {even}%, " + (
             f"{margin} to spare" if margin >= 0 else f"{-margin} over pace"))
-    return text
+    window = Window(text)
+    window.left, window.resets = left, resets
+    window.kind = "week" if label.startswith("Weekly") else "5h"
+    return window
 
 
 CREDENTIALS = pathlib.Path.home() / ".claude" / ".credentials.json"
@@ -193,9 +201,8 @@ def agy():
                     continue
                 label = ("5h limit:" if limit["label"].startswith("Five")
                          else "Weekly limit:")
-                shown.append("  " + line(label,
-                                         100 - limit["fraction"] * 100,
-                                         limit["reset"]))
+                shown.append(line(label, 100 - limit["fraction"] * 100,
+                                  limit["reset"], indent="    "))
             groups[value] = shown
             limits, current = [], {}
         elif name == "remainingFraction" and current:
@@ -209,15 +216,23 @@ def agy():
     return out or ["  no quota in the agy log"]
 
 
-LEDGER = pathlib.Path(__file__).with_name("usage-ledger.txt")
+LEDGER = pathlib.Path(__file__).with_name("usage-ledger.csv")
+# Each window's percent left and its reset, `YYYY-MM-DD HH:MM`; a blank is
+# a window that gave no reading.
+WINDOWS = [f"{plan}_{kind}" for plan in ("claude", "codex", "agy")
+           for kind in ("5h", "week")]
+FIELDS = ["time", "note"] + [f"{window}_{part}" for window in WINDOWS
+                             for part in ("left", "reset")]
 
 
 def main():
-    """Print what is left; with a note, also append it to the ledger.
+    """Print what is left; with a note, also append a row to the ledger.
 
-        usage.py "before: agy mcp gap tests"
+        usage.py "before: session mutation sweep"
 
-    A reading before and one after a handed-off task is what it cost.
+    A reading just before a task and one just after it is what the task
+    cost, whatever else was spending the same plans in between; `pace.py`
+    pairs them.
     """
     note = " ".join(sys.argv[1:])
     with ThreadPoolExecutor(3) as pool:
@@ -233,14 +248,21 @@ def main():
                 report.append(f"  could not ask: {problem}")
     print("\n".join(report))
     if note:
-        brief = "; ".join(
-            f"{name} " + (", ".join(
-                " ".join(l.replace(" limit:", "").split(" (")[0].split())
-                for l in lines) or "no reading")
-            for name, lines in _sections(report))
-        stamp = datetime.now().strftime("%y-%m-%d %H:%M")
-        with LEDGER.open("a", encoding="utf-8", newline=chr(10)) as book:
-            book.write(f"{stamp} | {note} | {brief}\n")
+        row = {"time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+               "note": note}
+        for name, lines in _sections(report[1:]):
+            for window in lines:
+                if isinstance(window, Window):
+                    key = f"{name.lower()}_{window.kind}"
+                    row[f"{key}_left"] = window.left
+                    row[f"{key}_reset"] = datetime.fromtimestamp(
+                        window.resets).strftime("%Y-%m-%d %H:%M")
+        fresh = not LEDGER.exists()
+        with LEDGER.open("a", encoding="utf-8", newline="") as book:
+            writer = csv.DictWriter(book, FIELDS, lineterminator=chr(10))
+            if fresh:
+                writer.writeheader()
+            writer.writerow(row)
 
 
 def _sections(report):
