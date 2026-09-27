@@ -40,6 +40,7 @@ def when(epoch):
 
 
 WEEK = 7 * 24 * 3600
+FIVE_HOURS = 5 * 3600
 
 
 class Window(str):
@@ -47,17 +48,18 @@ class Window(str):
 
 
 def line(label, used, resets, indent="  "):
-    """One window. A weekly one also says how it stands against an even
-    pace -- what would be left now if the week were spent evenly -- since a
-    week used up early is days out of commission, and a high % left early
-    in the week is not room to spare."""
+    """One window, and how it stands against an even pace -- what would be
+    left now if the window were spent evenly -- since a window used up early
+    is time out of commission, and a high % left early in it is not room to
+    spare. For a five-hour window that pace is the owner's 10% a half hour.
+    """
     left = max(0, 100 - round(used))
     text = f"{indent}{label:<14}{left:>3}% left (resets {when(resets)})"
-    if label.startswith("Weekly"):
-        even = round(100 * min(max(resets - time.time(), 0), WEEK) / WEEK)
-        margin = left - even
-        text += (f"; even pace {even}%, " + (
-            f"{margin} to spare" if margin >= 0 else f"{-margin} over pace"))
+    length = WEEK if label.startswith("Weekly") else FIVE_HOURS
+    even = round(100 * min(max(resets - time.time(), 0), length) / length)
+    margin = left - even
+    text += (f"; even pace {even}%, " + (
+        f"{margin} to spare" if margin >= 0 else f"{-margin} over pace"))
     window = Window(text)
     window.left, window.resets = left, resets
     window.kind = "week" if label.startswith("Weekly") else "5h"
