@@ -115,13 +115,16 @@ def compaction_model():
 
 
 def hermes_model():
-    """(provider, model) pi-hermes-memory's reviews run on: llmModelOverride in ~/.pi/agent/hermes-memory-config.json."""
+    """(provider, model, recent, since) of pi-hermes-memory's reviews, from ~/.pi/agent/hermes-memory-config.json:
+    llmModelOverride, and reviewRecentMessages, the last so many messages a review sends (0, the default, is all of them),
+    taken to hold from the file's last change and before it to have been 0."""
+    path = HOME / ".pi/agent/hermes-memory-config.json"
     try:
-        named = json.loads((HOME / ".pi/agent/hermes-memory-config.json").read_text(encoding="utf-8"))["llmModelOverride"]
-    except (OSError, ValueError, KeyError, TypeError):
+        config = json.loads(path.read_text(encoding="utf-8"))
+        provider, _, model = config["llmModelOverride"].partition("/")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    provider, _, model = named.partition("/")
-    return provider, model
+    return provider, model, int(config.get("reviewRecentMessages") or 0), path.stat().st_mtime
 
 
 # pi-hermes-memory reviews a session every 10 turns or 15 tool calls, once it has 3 user messages (its constants.ts and
@@ -145,12 +148,13 @@ def text_of(message):
 
 def reviews(path, rows, hermes):
     """The hermes reviews one session file's messages would have set off, as estimated calls."""
-    chars = turns = tools = users = 0
+    sizes, turns, tools, users = [], 0, 0, 0
+    _, _, recent, since = hermes
     for row in rows:
         message = row.get("message")
         if row.get("type") != "message" or not isinstance(message, dict):
             continue
-        chars += min(len(text_of(message)), REVIEW_CUT) + 14  # and its "[ASSISTANT]: " prefix
+        sizes.append(min(len(text_of(message)), REVIEW_CUT) + 14)  # and its "[ASSISTANT]: " prefix
         users += message.get("role") == "user"
         if message.get("role") != "assistant":
             continue
@@ -159,10 +163,11 @@ def reviews(path, rows, hermes):
         tools += sum(1 for b in content if isinstance(b, dict) and b.get("type") == "toolCall") if isinstance(content, list) else 0
         if (turns >= REVIEW_TURNS or tools >= REVIEW_TOOLS) and users >= REVIEW_USERS:
             turns = tools = 0
-            if REVIEW_PROMPT + chars // 4 > REVIEW_MOST:
+            sent = REVIEW_PROMPT + sum(sizes[-recent:] if recent and when(row["timestamp"]) >= since else sizes) // 4
+            if sent > REVIEW_MOST:
                 continue
             yield Call(when(row["timestamp"]), "codex" if hermes[0] == "openai-codex" else "claude", "hermes review (est.)",
-                       hermes[1], REVIEW_PROMPT + chars // 4, 0, 0, 0, REVIEW_ANSWER)
+                       hermes[1], sent, 0, 0, 0, REVIEW_ANSWER)
 
 
 def pi(since):
