@@ -2,6 +2,7 @@
 
     uv run --no-sync python ../tools/pace.py            # from the ledger's last reading
     uv run --no-sync python ../tools/pace.py --fresh    # take a reading first
+    uv run --no-sync python ../tools/pace.py --brief    # costs and room, no task table
 
 A task is a `before: NAME` row and the next `after: NAME` row in
 usage-ledger.csv. `ask.sh` writes both for a hand-off (NAME is `critic x`,
@@ -100,15 +101,16 @@ def main():
     with LEDGER.open(encoding="utf-8", newline="") as book:
         rows = list(csv.DictReader(book))
     done = tasks(rows)
-    shown = [w for w in WINDOWS if w != "claude_week"]
-    print(f"{'task':<34}{'min':>5}" + "".join(f"{w:>12}" for w in shown))
-    for name, minutes, used, shared in done:
-        print(f"{name[:34]:<34}{minutes:>5.0f}"
-              + "".join(f"{used.get(w, '-'):>12}" for w in shown)
-              + ("  shared" if shared else ""))
+    if "--brief" not in sys.argv:
+        shown = [w for w in WINDOWS if w != "claude_week"]
+        print(f"{'task':<34}{'min':>5}" + "".join(f"{w:>12}" for w in shown))
+        for name, minutes, used, shared in done:
+            print(f"{name[:34]:<34}{minutes:>5.0f}"
+                  + "".join(f"{used.get(w, '-'):>12}" for w in shown)
+                  + ("  shared" if shared else ""))
+        print()
 
     costs = {}
-    print()
     for kind, plan in SPENDS.items():
         spent = [used for name, _, used, shared in done
                  if name.split()[0] == kind and not shared]
