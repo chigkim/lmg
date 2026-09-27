@@ -1,4 +1,8 @@
-model,input,cache_read,cache_write,output,source
-gpt-6-sol,2.00,0.20,2.50,10.00,"OpenAI via techjacksolutions.com and aipricing.guru, checked 2026-09-27"
-gemini-3.8-flash-medium,0.75,0.075,0.04167,3.75,"openrouter.ai/google/gemini-3.8-flash, checked 2026-09-27; introductory to 2026-12-31, then 1.50 and 7.50"
-gemini-3.8-flash-high,0.75,0.075,0.04167,3.75,"the same model at a higher thinking level; the same rates"
+model,input,cache_read,cache_write,cache_write_1h,output,source
+claude-opus-5-5,4.00,0.20,5.00,8.00,20.00,"platform.claude.com/docs/en/about-claude/pricing, checked 2026-09-27"
+claude-opus-5,5.00,0.50,6.25,10.00,25.00,"platform.claude.com/docs/en/about-claude/pricing, checked 2026-09-27"
+claude-sonnet-5,2.00,0.20,2.50,4.00,10.00,"platform.claude.com/docs/en/about-claude/pricing, checked 2026-09-27"
+claude-haiku-4-5-20251001,1.00,0.10,1.25,2.00,5.00,"platform.claude.com/docs/en/about-claude/pricing, checked 2026-09-27"
+gpt-6-sol,2.00,0.20,2.50,2.50,10.00,"OpenAI via techjacksolutions.com and aipricing.guru, checked 2026-09-27"
+gemini-3.8-flash,0.75,0.075,0,0,3.75,"openrouter.ai/google/gemini-3.8-flash and cloud.google.com, checked 2026-09-27; introductory to 2026-12-31, then 1.50 and 7.50; agy's -low, -medium and -high are thinking levels of this one model"
+gemini-3.7-flash,0.75,0.075,0,0,3.75,"cloud.google.com: 3.8, 3.7 and 3.6 Flash share the introductory rate, checked 2026-09-27"
