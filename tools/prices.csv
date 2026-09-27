@@ -1,0 +1,4 @@
+model,input,cache_read,cache_write,output,source
+gpt-6-sol,2.00,0.20,2.50,10.00,"OpenAI via techjacksolutions.com and aipricing.guru, checked 2026-09-27"
+gemini-3.8-flash-medium,0.75,0.075,0.04167,3.75,"openrouter.ai/google/gemini-3.8-flash, checked 2026-09-27; introductory to 2026-12-31, then 1.50 and 7.50"
+gemini-3.8-flash-high,0.75,0.075,0.04167,3.75,"the same model at a higher thinking level; the same rates"
