@@ -19,10 +19,12 @@ dearest task (`typical`); a task another task here overlapped is marked
 Pace is even spending: a window with a quarter of its length left to run is
 on pace with a quarter of it left. The owner's pace for the session is 10% a
 half hour, which is exactly even over a 5-hour window, and the weekly windows
-are the real limit for the critic and the worker, whose 5-hour windows only
-have to last. What a paced window has beyond its even line is its spare, and
-the jobs that fit are the tightest of spare, or what an unpaced window has
-left, over what one job of that kind costs there.
+are what the critic and the worker are paced on (`PACED`). What a window has
+beyond its even line is its spare, and the jobs that fit are that spare over
+what one job of that kind costs there. A weekly window reads in whole points
+and one job rarely moves it, so a kind whose jobs have not yet moved it is
+given the bound its count allows: n jobs that cost nought each cost under
+1/n of a point, so at least spare times n more fit.
 """
 import csv
 import pathlib
@@ -37,8 +39,10 @@ LENGTH = {"5h": 5 * 3600, "week": 7 * 24 * 3600}
 # The plan each kind of task spends.
 SPENDS = {"session": "claude", "critic": "codex", "review": "codex", "worker": "agy"}
 WINDOWS = [f"{plan}_{kind}" for plan in ("claude", "codex", "agy") for kind in LENGTH]
-# The critic's and the worker's 5-hour windows only have to last, not keep pace.
-UNPACED = {"codex_5h", "agy_5h"}
+# The one window each kind is paced on: the session's 5-hour window, and the
+# weekly window of the plan the critic or the worker spends.
+PACED = {"session": "claude_5h", "critic": "codex_week", "review": "codex_week",
+         "worker": "agy_week"}
 RECENT = 10
 
 
@@ -131,18 +135,22 @@ def main():
         print(f"  {window:<12}{left:>4}% left, even pace {even:>3}%, "
               + (f"{spare} to spare" if spare >= 0 else f"{-spare} over pace"))
     print()
-    for kind, plan in SPENDS.items():
-        limits = []
-        for window, cost in costs[kind].items():
-            if window in stand and cost > 0:
-                left, _, spare = stand[window]
-                room = left if window in UNPACED else spare
-                limits.append((max(room, 0) // cost, window))
-        if limits:
-            fit, window = min(limits)
-            print(f"  {kind:<8} {fit:g} more before {window} runs out of room")
+    for kind, window in PACED.items():
+        seen = [used[window] for name, _, used, shared in done
+                if name.split()[0] == kind and not shared and window in used]
+        if window not in stand:
+            print(f"  {kind:<8} no reading of {window}")
+            continue
+        spare = max(stand[window][2], 0)
+        if not seen:
+            print(f"  {kind:<8} no paired task yet; {window} has {spare} to spare")
+        elif sum(seen):
+            cost = statistics.mean(seen)
+            print(f"  {kind:<8} {spare // cost:g} more on pace ({window}, "
+                  f"{cost:.2f} a task over {len(seen)})")
         else:
-            print(f"  {kind:<8} each measured task cost under a point; no limit yet")
+            print(f"  {kind:<8} at least {spare * len(seen)} more on pace ({window}, "
+                  f"{len(seen)} tasks moved it nought)")
 
 
 if __name__ == "__main__":
