@@ -51,7 +51,9 @@ def moment(text):
 
 
 def tasks(rows):
-    """(name, minutes, {window: points used}, shared) per paired task."""
+    """(name, minutes, {window: points used}, shared) per paired task. Shared is an overlap with a task that spends
+    the same plan, whose points the two readings cannot tell apart; a critic running beside a worker spends another
+    plan and leaves the critic's figure its own."""
     open_, paired = {}, []
     for row in rows:
         kind, _, name = row["note"].partition(": ")
@@ -67,8 +69,12 @@ def tasks(rows):
             paired.append((name, moment(before["time"]), moment(row["time"]), used))
     return [(name, (end - start).total_seconds() / 60, used,
              any(s < end and start < e for n, s, e, _ in paired
-                 if (n, s) != (name, start)))
+                 if (n, s) != (name, start) and plan(n) == plan(name)))
             for name, start, end, used in paired]
+
+
+def plan(name):
+    return SPENDS.get(name.split()[0])
 
 
 def typical(points):

@@ -147,16 +147,17 @@ def text_of(message):
 
 
 def reviews(path, rows, hermes):
-    """The hermes reviews one session file's messages would have set off, as estimated calls."""
+    """The hermes reviews one session file's (row, fresh) pairs would have set off, as estimated calls. A row copied in
+    by a fork is part of what a review sends but sets none off, having set its own off in the session it came from."""
     sizes, turns, tools, users = [], 0, 0, 0
     _, _, recent, since = hermes
-    for row in rows:
+    for row, fresh in rows:
         message = row.get("message")
         if row.get("type") != "message" or not isinstance(message, dict):
             continue
         sizes.append(min(len(text_of(message)), REVIEW_CUT) + 14)  # and its "[ASSISTANT]: " prefix
         users += message.get("role") == "user"
-        if message.get("role") != "assistant":
+        if message.get("role") != "assistant" or not fresh:
             continue
         turns += 1
         content = message.get("content")
@@ -185,13 +186,24 @@ def pi(since):
     hook, hermes = compaction_model(), hermes_model()
     current = {}  # session file -> (provider, model) last used
     session = collections.defaultdict(list)
-    for path, row in lines(".pi/agent/sessions/*/*.jsonl", since):
-        session[path].append(row)
+    # Sessions nest (a task's own sessions sit a folder down), and a fork copies the history it was forked from into
+    # its own file, 138 calls by 2026-09-27; so a call or a compaction is counted once, by response id and time.
+    counted = set()
+    for path, row in lines(".pi/agent/sessions/**/*.jsonl", since):
         message = row.get("message")
         if row.get("type") == "model_change":
             current[path] = row.get("provider"), row.get("modelId")
         elif isinstance(message, dict) and message.get("role") == "assistant" and message.get("provider"):
             current[path] = message["provider"], message.get("model")
+        fresh = True
+        if row.get("type") == "compaction" or isinstance(message, dict) and "usage" in message:
+            key = (row.get("id"), row.get("timestamp")) if row.get("type") == "compaction" else \
+                (message.get("responseId"), message.get("timestamp"))
+            fresh = key not in counted
+            counted.add(key)
+        session[path].append((row, fresh))
+        if not fresh:
+            continue
         if row.get("type") == "compaction":
             usage = row.get("usage") or {}
             if usage.get("totalTokens"):
