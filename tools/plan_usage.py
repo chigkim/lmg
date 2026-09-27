@@ -193,12 +193,20 @@ def base(model):
     return re.sub(r"-(low|medium|high)$", "", model.split("[")[0])
 
 
+# OpenAI: a prompt over 272K input tokens is priced at 2x input and cache rates and 1.5x output for the whole request, on
+# the models its pricing page gives a long-context column (developers.openai.com/api/docs/models/gpt-6-sol, 2026-09-27).
+LONG = re.compile(r"gpt-(6|5\.6)-|gpt-5\.[45]$")
+
+
 def dollars(call, table):
     rate = table.get(base(call.model))
     if rate is None:
         return None
-    return (call.input * rate["input"] + call.cache_read * rate["cache_read"] + call.cache_write * rate["cache_write"]
-            + call.cache_write_1h * rate["cache_write_1h"] + call.output * rate["output"]) / 1e6
+    prompt, answer = 1, 1
+    if LONG.match(base(call.model)) and call.input + call.cache_read + call.cache_write > 272_000:
+        prompt, answer = 2, 1.5
+    return (prompt * (call.input * rate["input"] + call.cache_read * rate["cache_read"] + call.cache_write * rate["cache_write"]
+                      + call.cache_write_1h * rate["cache_write_1h"]) + answer * call.output * rate["output"]) / 1e6
 
 
 def everything(since):
