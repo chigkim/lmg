@@ -237,34 +237,44 @@ def main():
     pairs them.
     """
     note = " ".join(sys.argv[1:])
-    with ThreadPoolExecutor(3) as pool:
-        asked = {"Claude": pool.submit(claude), "Codex": pool.submit(codex),
-                 "agy": pool.submit(agy)}
-        report = [datetime.now().strftime("Now %I:%M %p on %d %b")
-                  .replace(" 0", " ")]
-        for name, future in asked.items():
-            report.append(name)
-            try:
-                report += future.result()
-            except Exception as problem:
-                report.append(f"  could not ask: {problem}")
+    report = asked()
     print("\n".join(report))
     if note:
         row = {"time": datetime.now().strftime("%Y-%m-%d %H:%M"),
                "note": note}
-        for name, lines in _sections(report[1:]):
-            for window in lines:
-                if isinstance(window, Window):
-                    key = f"{name.lower()}_{window.kind}"
-                    row[f"{key}_left"] = window.left
-                    row[f"{key}_reset"] = datetime.fromtimestamp(
-                        window.resets).strftime("%Y-%m-%d %H:%M")
+        for key, window in windows(report).items():
+            row[f"{key}_left"] = window.left
+            row[f"{key}_reset"] = datetime.fromtimestamp(
+                window.resets).strftime("%Y-%m-%d %H:%M")
         fresh = not LEDGER.exists()
         with LEDGER.open("a", encoding="utf-8", newline="") as book:
             writer = csv.DictWriter(book, FIELDS, lineterminator=chr(10))
             if fresh:
                 writer.writeheader()
             writer.writerow(row)
+
+
+def asked():
+    """The printed report: the three plans asked at once."""
+    with ThreadPoolExecutor(3) as pool:
+        futures = {"Claude": pool.submit(claude), "Codex": pool.submit(codex),
+                   "agy": pool.submit(agy)}
+        report = [datetime.now().strftime("Now %I:%M %p on %d %b")
+                  .replace(" 0", " ")]
+        for name, future in futures.items():
+            report.append(name)
+            try:
+                report += future.result()
+            except Exception as problem:
+                report.append(f"  could not ask: {problem}")
+    return report
+
+
+def windows(report):
+    """The report's readings, `claude_5h` and the like, to their Window."""
+    return {f"{name.lower()}_{window.kind}": window
+            for name, lines in _sections(report[1:]) for window in lines
+            if isinstance(window, Window)}
 
 
 def _sections(report):

@@ -3,7 +3,7 @@
     uv run --no-sync python ../tools/plan_usage.py                 # the last five hours
     uv run --no-sync python ../tools/plan_usage.py --hours 24
     uv run --no-sync python ../tools/plan_usage.py --since "2026-09-27 12:00"
-    uv run --no-sync python ../tools/plan_usage.py --per-point     # tokens and dollars a point of each 5h window
+    uv run --no-sync python ../tools/plan_usage.py --limits        # each 5h and weekly window's size and use, in dollars
 
 A plan's limit counts every call made on it, whoever made it, so this reads every record each client leaves:
 
@@ -18,8 +18,9 @@ A plan's limit counts every call made on it, whoever made it, so this reads ever
   time is that of the matching model-response step (step_type 15, one a row, in order).
 
 Models run locally (Qwen under Claude Code, Ollama under Codex) are skipped: they spend no plan.
---per-point lines this up with usage-ledger.csv, which ask.sh and usage.py fill: between two rows where a plan's 5h figure
-fell, the calls made are what that many points cost. The ledger's whole percents make one gap rough and the sum fair.
+--limits lines this up with usage-ledger.csv, which ask.sh and usage.py fill: between two rows where a window's figure
+fell, the calls made are what that many points cost, and a hundred points are the window. The ledger's whole percents
+make one gap rough and the sum fair. It asks usage.py for what is left now.
 """
 import argparse
 import collections
@@ -232,38 +233,76 @@ def report(since, table):
             print(f"{plan:7}{source:17}{n:7}{i:11,}{r:13,}{w:13,}{o:11,}{usd:10.2f}{note}")
 
 
-def per_point(table):
+def stamp(text):
+    return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M").timestamp()
+
+
+def per_point(ledger, calls, plan, kind, table):
+    """(points, dollars) over the ledger, a stretch of rows in one window at a time: first row's figure less the last's,
+    and every call between them. Taken gap by gap instead, a gap whose fall rounds to nought loses its calls and the next
+    gap gains its points, which halved the weekly rate.
+
+    A stretch ends where the figure rises, which is a reset, or the reset moves, which is a new window or another
+    account -- agy's was swapped twice on 2026-09-27. A 5h gap over three hours may hide a reset unseen, so it ends one.
+    """
+    # The ledger's first rows kept no reset; there a 5h fall is taken on the three-hour rule alone and a weekly one not at all.
+    rows = [(stamp(r["time"]), int(r[f"{plan}_{kind}_left"]), r[f"{plan}_{kind}_reset"] and stamp(r[f"{plan}_{kind}_reset"]))
+            for r in ledger if r.get(f"{plan}_{kind}_left")]
+    stretches = [[rows[0]]] if rows else []
+    for (a, was, reset), row in zip(rows, rows[1:]):
+        b, now, then = row
+        same = abs(then - reset) <= 600 if reset and then else kind == "5h" and not reset and not then
+        if now <= was and same and (kind == "week" or b - a <= 3 * 3600):
+            stretches[-1].append(row)
+        else:
+            stretches.append([row])
+    points, spent = 0, []
+    for stretch in stretches:
+        (a, was, _), (b, now, _) = stretch[0], stretch[-1]
+        if now < was:
+            points += was - now
+            spent += [c for c in calls if c.plan == plan and a <= c.time < b]
+    return points, summed(spent, table)[5]
+
+
+def limits(table):
+    """Each window in API dollars: the whole of it, and what has gone since it opened."""
+    import sys
+    sys.path.insert(0, str(TOOLS))
+    import usage
+    now = usage.windows(usage.asked())
     with open(TOOLS / "usage-ledger.csv", encoding="utf-8") as handle:
         ledger = list(csv.DictReader(handle))
-    first = min(datetime.datetime.strptime(r["time"], "%Y-%m-%d %H:%M").timestamp() for r in ledger)
-    calls = everything(first)
-    print("between usage-ledger rows where a plan's 5h figure fell, at public API rates")
-    print(f"{'plan':7}{'points':>7}{'calls':>7}{'cache read':>13}{'output':>11}{'usd':>10}  per point: {'cache read':>11}{'output':>9}{'usd':>7}")
+    calls = everything(min(stamp(r["time"]) for r in ledger) - usage.WEEK)
+    print("each plan window at public API rates; a window's size is its dollars a point, measured over usage-ledger.csv, times 100")
+    print(f"{'window':12}{'left':>6}{'points':>8}{'$ a point':>11}{'size $':>10}{'used $':>10}{'used $ by %':>13}")
     for plan in PLANS:
-        points, spent = 0, []
-        rows = [(datetime.datetime.strptime(r["time"], "%Y-%m-%d %H:%M").timestamp(), int(r[f"{plan}_5h_left"]))
-                for r in ledger if r.get(f"{plan}_5h_left")]
-        for (a, was), (b, now) in zip(rows, rows[1:]):
-            # A rise is a reset inside the gap and a long gap may hold one unseen, so neither is counted.
-            if now < was and b - a <= 3 * 3600:
-                points += was - now
-                spent += [c for c in calls if c.plan == plan and a <= c.time < b]
-        if not points:
-            print(f"{plan:7}{0:7}  no fall in the ledger to measure against")
-            continue
-        n, _, r, _, o, usd, _ = summed(spent, table)
-        print(f"{plan:7}{points:7}{n:7}{r:13,}{o:11,}{usd:10.2f}  {'':11}{r / points:11,.0f}{o / points:9,.0f}{usd / points:7.2f}")
+        for kind, length in (("5h", usage.FIVE_HOURS), ("week", usage.WEEK)):
+            window = now.get(f"{plan}_{kind}")
+            if window is None:  # Claude's plan has no weekly window
+                continue
+            points, usd = per_point(ledger, calls, plan, kind, table)
+            opened = window.resets - length
+            used = summed([c for c in calls if c.plan == plan and c.time >= opened], table)[5]
+            if not points:
+                print(f"{plan + ' ' + kind:12}{window.left:5}%{'':8}{'':11}{'':10}{used:10.2f}  no fall in the ledger to size it by")
+                continue
+            rate = usd / points
+            print(f"{plan + ' ' + kind:12}{window.left:5}%{points:8}{rate:11.2f}{rate * 100:10.2f}{used:10.2f}"
+                  f"{rate * (100 - window.left):13.2f}")
+    print("used $ is every call since the window opened; used $ by % is the points gone times $ a point, so the two disagree"
+          " by what the rate misjudges -- or by calls these records do not hold")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--hours", type=float, default=5)
     parser.add_argument("--since", help="YYYY-MM-DD HH:MM, local time; overrides --hours")
-    parser.add_argument("--per-point", action="store_true")
+    parser.add_argument("--limits", action="store_true", help="each plan window in dollars: its size and what is used")
     args = parser.parse_args()
     table = prices()
-    if args.per_point:
-        per_point(table)
+    if args.limits:
+        limits(table)
         return
     since = (datetime.datetime.strptime(args.since, "%Y-%m-%d %H:%M").timestamp() if args.since
              else datetime.datetime.now().timestamp() - args.hours * 3600)
