@@ -1,11 +1,11 @@
 """The usage calculator: what each task cost, and how many more fit now.
 
-    ai-pace            # from the ledger's last reading
-    ai-pace --fresh    # take a reading first
-    ai-pace --brief    # costs and room, no task table
+    askai pace            # from the ledger's last reading
+    askai pace --fresh    # take a reading first
+    askai pace --brief    # costs and room, no task table
 
 A task is a `before: NAME` row and the next `after: NAME` row in the ledger,
-written by `ai-usage "before: NAME"` and `ai-usage "after: NAME"` around it.
+written by `askai usage "before: NAME"` and `askai usage "after: NAME"` around it.
 The first word of NAME is the task's kind, and `pace.toml` beside the ledger
 names the one window each kind is paced on:
 
@@ -41,7 +41,7 @@ import sys
 import tomllib
 from datetime import datetime
 
-from ask_ai import usage
+from askai import usage
 
 LENGTH = {"5h": 5 * 3600, "week": 7 * 24 * 3600}
 WINDOWS = usage.WINDOWS
@@ -141,18 +141,19 @@ def percent(points):
     return f"{points:g}%"
 
 
-def main():
-    if "--fresh" in sys.argv:
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if "--fresh" in argv:
         usage.record("reading: pace", usage.asked())
     if not usage.LEDGER.exists():
-        print(f"no ledger yet at {usage.LEDGER}; run with --fresh, or ai-usage with a note")
+        print(f"no ledger yet at {usage.LEDGER}; run with --fresh, or askai usage with a note")
         return
     with usage.LEDGER.open(encoding="utf-8", newline="") as book:
         rows = list(csv.DictReader(book))
     done = tasks(rows)
     if not PACED:
         print(f"no {usage.DATA / 'pace.toml'}, so no kind of task is costed or paced\n")
-    if "--brief" not in sys.argv:
+    if "--brief" not in argv:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
         print("every task in the ledger")

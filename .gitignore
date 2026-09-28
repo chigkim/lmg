@@ -1,8 +1,8 @@
 # Your own readings, records and settings, written beside the scripts: not the tool's to share.
-/src/ask_ai/usage-ledger.csv
-/src/ask_ai/token-ledger.csv
-/src/ask_ai/pace.toml
-/src/ask_ai/homes.toml
+/src/askai/usage-ledger.csv
+/src/askai/token-ledger.csv
+/src/askai/pace.toml
+/src/askai/homes.toml
 
 __pycache__/
 .venv/

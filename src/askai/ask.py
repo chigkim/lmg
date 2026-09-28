@@ -1,9 +1,10 @@
 """Hand one job to agy, Claude Code or Codex, in its own git worktree, with a usage reading either side.
 
-    ask-ai agy|claude|codex read|edit PROMPT [ID]   # a job, or a follow-up to the one ID names
-    ask-ai review SHA                               # codex exec review of one commit
-    ask-ai clean agy|claude|codex NAME [--force]    # remove a job's worktree and branch, if nothing is lost
-    ask-ai list                                     # every open job: its runs, answer, changes and id
+    askai agy|claude|codex read|edit PROMPT [ID]   # a job, or a follow-up to the one ID names
+    askai review SHA                               # codex exec review of one commit
+    askai clean agy|claude|codex NAME [--force]    # remove a job's worktree and branch, if nothing is lost
+    askai list                                     # every open job: its runs, answer, changes and id
+    askai usage|plan|pace ...                      # read the plans: usage.py, plan.py and pace.py, which see
 
     --repo PATH    the repository, instead of the one the current folder is in
     --home PATH    where worktrees/ and runs/ go, instead of the repository's home
@@ -31,7 +32,7 @@ holds the id, and `list` finds it there. A follow-up is a new prompt file of the
 id, and may change mode.
 
 A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME` and `after: ...`, so the
-harness is the kind `ai-pace` costs. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
+harness is the kind `askai pace` costs. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
 cache reads, cache writes and output, which add up to what the model read and wrote, and what they would cost on
 the public API at the rates in `prices.csv`. All three sit beside this file.
 """
@@ -47,7 +48,10 @@ import sys
 import time
 from datetime import datetime
 
-from ask_ai import plan, usage
+from askai import pace, plan, usage
+
+# The three commands that only read the plans, each its own module's main, handed the rest of the command line.
+READERS = {"usage": usage.main, "plan": plan.main, "pace": pace.main}
 
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
@@ -276,7 +280,7 @@ def worktree(repo, tree, resume):
         if common(tree) != common(repo):
             raise Problem(f"{tree} is there but is not a worktree of {repo}")
         if not resume:
-            raise Problem(f"{tree} is left from an earlier job: follow it up with its id (`ask-ai list`), or clean it")
+            raise Problem(f"{tree} is left from an earlier job: follow it up with its id (`askai list`), or clean it")
         return
     if resume:
         raise Problem(f"no worktree {tree} to follow up in")
@@ -293,7 +297,7 @@ def numbered(folder, name):
 
 
 def reading(stage, note):
-    """An ai-usage reading into its ledger, which ai-pace pairs; a plan that cannot be asked is said and skipped."""
+    """An askai usage reading into its ledger, which askai pace pairs; a plan that cannot be asked is said and skipped."""
     report = usage.asked()
     usage.record(f"{stage}: {note}", report)
     return report
@@ -331,7 +335,7 @@ def bound():
                                                       ctypes.sizeof(limits))  # 9: JobObjectExtendedLimitInformation
         if not (ok and kernel32.AssignProcessToJobObject(wintypes.HANDLE(job),
                                                          wintypes.HANDLE(kernel32.GetCurrentProcess()))):
-            print(f"warning: no job object (error {ctypes.get_last_error()}), so killing ask-ai may leave the"
+            print(f"warning: no job object (error {ctypes.get_last_error()}), so killing askai may leave the"
                   " harness running", file=sys.stderr)
         return job  # the handle is never closed: the job ends with this process
     import signal
@@ -536,7 +540,7 @@ def listing(repo, home):
 
 
 def parse(argv):
-    parser = argparse.ArgumentParser(prog="ask-ai", description=__doc__.split("\n\n")[0],
+    parser = argparse.ArgumentParser(prog="askai", description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit PROMPT [ID], review SHA, clean ..., list")
     parser.add_argument("--repo", help="the repository; the one the current folder is in unless given")
@@ -548,9 +552,13 @@ def parse(argv):
 
 
 def main(argv=None):
-    args = parse(sys.argv[1:] if argv is None else argv)
+    # Only the real command binds its children to it; a test calling main is not to join a job object.
+    command_line, argv = argv is None, sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in READERS:
+        return READERS[argv[0]](argv[1:])
+    args = parse(argv)
     words = args.words
-    if argv is None:
+    if command_line:
         bound()
     try:
         repo = toplevel(pathlib.Path(args.repo or os.getcwd()).resolve())
@@ -558,21 +566,21 @@ def main(argv=None):
         what = words[0]
         if what in HARNESSES:
             if len(words) not in (3, 4) or words[1] not in ("read", "edit"):
-                raise Problem(f"ask-ai {what} read|edit PROMPT [ID]")
+                raise Problem(f"askai {what} read|edit PROMPT [ID]")
             status, note, cleanup = job(what, words[1], words[2], words[3] if len(words) == 4 else None, repo, home,
                                         args.model or DEFAULTS[what], args.timeout)
         elif what == "review":
             if len(words) != 2:
-                raise Problem("ask-ai review SHA")
+                raise Problem("askai review SHA")
             status, note, cleanup = review(words[1], repo, home, args.model or DEFAULTS["codex"])
         elif what == "clean":
             if len(words) != 3 or words[1] not in HARNESSES:
-                raise Problem("ask-ai clean agy|claude|codex NAME")
+                raise Problem("askai clean agy|claude|codex NAME")
             clean(words[1], words[2], repo, home, args.force)
             return 0
         elif what == "list":
             if len(words) != 1:
-                raise Problem("ask-ai list")
+                raise Problem("askai list")
             listing(repo, home)
             return 0
         else:
@@ -584,11 +592,11 @@ def main(argv=None):
     print("\n".join(reading("after", note)))
     print()
     sys.stdout.flush()
-    subprocess.run([sys.executable, "-m", "ask_ai.pace", "--brief"], env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    pace.main(["--brief"])
     if cleanup:
         harness, name = cleanup
         print(f"\nREMINDER: when the answer is reviewed and anything worth keeping is merged, remove the worktree:\n"
-              f"  ask-ai clean {harness} {name}\n"
+              f"  askai clean {harness} {name}\n"
               f"A follow-up in the same worktree goes first: a new prompt file named {name}-prompt.md plus the id above.")
     return status
 

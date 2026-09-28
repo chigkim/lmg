@@ -1,9 +1,9 @@
 """What the Claude, Codex and agy plans were spent on: every call's tokens, who made it, and its public-API dollars.
 
-    ai-plan                            # the last five hours
-    ai-plan --hours 24
-    ai-plan --since "2026-09-27 12:00"
-    ai-plan --limits                   # each 5h and weekly window's size and use, in dollars
+    askai plan                            # the last five hours
+    askai plan --hours 24
+    askai plan --since "2026-09-27 12:00"
+    askai plan --limits                   # each 5h and weekly window's size and use, in dollars
 
 A plan's limit counts every call made on it, whoever made it, so this reads every record each client leaves:
 
@@ -21,9 +21,9 @@ A plan's limit counts every call made on it, whoever made it, so this reads ever
   time is that of the matching model-response step (step_type 15, one a row, in order).
 
 Models run locally (Qwen under Claude Code, Ollama under Codex) are skipped: they spend no plan.
---limits lines this up with the ledger `ai-usage NOTE` fills: between two rows where a window's figure
+--limits lines this up with the ledger `askai usage NOTE` fills: between two rows where a window's figure
 fell, the calls made are what that many points cost, and a hundred points are the window. The ledger's whole percents
-make one gap rough and the sum fair. It asks ai-usage for what is left now.
+make one gap rough and the sum fair. It asks askai usage for what is left now.
 """
 import argparse
 import collections
@@ -34,7 +34,7 @@ import pathlib
 import re
 import sqlite3
 
-from ask_ai import usage
+from askai import usage
 
 HOME = pathlib.Path.home()
 PRICES = pathlib.Path(__file__).with_name("prices.csv")
@@ -422,12 +422,12 @@ def limits(table):
     """Each window in API dollars: the whole of it, and what has gone since it opened."""
     now = usage.windows(usage.asked())
     if not usage.LEDGER.exists():
-        print(f"no ledger yet at {usage.LEDGER}; `ai-usage NOTE` starts one")
+        print(f"no ledger yet at {usage.LEDGER}; `askai usage NOTE` starts one")
         return
     with open(usage.LEDGER, encoding="utf-8") as handle:
         ledger = list(csv.DictReader(handle))
     if not ledger:
-        print(f"no readings yet in {usage.LEDGER}; `ai-usage NOTE` adds one")
+        print(f"no readings yet in {usage.LEDGER}; `askai usage NOTE` adds one")
         return
     calls = everything(min(stamp(r["time"]) for r in ledger) - usage.WEEK)
     print("each plan window in dollars at public API rates")
@@ -461,12 +461,12 @@ def limits(table):
                                 " the rate misjudges, or by calls these records do not hold"})))
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="askai plan", description=__doc__.splitlines()[0])
     parser.add_argument("--hours", type=float, default=5)
     parser.add_argument("--since", help="YYYY-MM-DD HH:MM, local time; overrides --hours")
     parser.add_argument("--limits", action="store_true", help="each plan window in dollars: its size and what is used")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     table = prices()
     if args.limits:
         limits(table)

@@ -1,6 +1,6 @@
 import pytest
 
-from ask_ai import pace
+from askai import pace
 
 
 def row(time, note, **left):

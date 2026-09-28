@@ -1,7 +1,7 @@
 """How much of the Claude, Codex and agy plan windows is left.
 
-    ai-usage                      # print it
-    ai-usage "before: some task"  # print it and add a row to the ledger
+    askai usage                      # print it
+    askai usage "before: some task"  # print it and add a row to the ledger
 
 Codex and agy are read without running a model: `codex app-server` answers
 `account/rateLimits/read`, and `agy models` logs its quota. Claude is read
@@ -281,16 +281,16 @@ FIELDS = ["time", "note"] + [f"{window}_{part}" for window in WINDOWS
                              for part in ("left", "reset")]
 
 
-def main():
+def main(argv=None):
     """Print what is left; with a note, also append a row to the ledger.
 
-        ai-usage "before: session mutation sweep"
+        askai usage "before: session mutation sweep"
 
     A reading just before a task and one just after it is what the task
-    cost, whatever else was spending the same plans in between; `ai-pace`
+    cost, whatever else was spending the same plans in between; `askai pace`
     pairs them.
     """
-    note = " ".join(sys.argv[1:])
+    note = " ".join(sys.argv[1:] if argv is None else argv)
     report = asked()
     print("\n".join(report))
     if note:

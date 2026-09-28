@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from ask_ai import ask
+from askai import ask
 
 
 def test_a_job_is_named_after_its_prompt_file():
@@ -237,3 +237,11 @@ def test_a_repository_s_home_is_beside_it_unless_homes_toml_names_one(repo, tmp_
 def test_claude_read_mode_is_the_three_tools_and_nothing_else():
     assert ask.flags("claude", "read") == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
                                            "--permission-mode", "dontAsk", "--strict-mcp-config"]
+
+
+def test_usage_plan_and_pace_are_forms_of_the_one_command(monkeypatch):
+    seen = []
+    monkeypatch.setitem(ask.READERS, "pace", lambda argv: seen.append(argv) or 0)
+    assert ask.main(["pace", "--brief"]) == 0
+    assert seen == [["--brief"]]
+    assert set(ask.READERS) == {"usage", "plan", "pace"}
