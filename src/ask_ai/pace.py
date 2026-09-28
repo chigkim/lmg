@@ -32,8 +32,8 @@ hour. What a window has
 beyond its even line is its spare, and the jobs that fit are that spare over
 what one job of that kind costs there. A weekly window reads in whole points
 and one job rarely moves it, so a kind whose jobs have not yet moved it is
-given the bound its count allows: n jobs that cost nought each cost under
-1/n of a point, so at least spare times n more fit.
+given the one bound it allows: each cost under the meter's 1%, so at least
+spare more fit.
 """
 import csv
 import statistics
@@ -209,8 +209,9 @@ def main():
         spare = max(stand[window][2], 0)
         if not seen:
             fits.append([kind, window, "-", "no task yet", "-", 0])
-        elif sum(seen):
-            cost = statistics.mean(seen)
+        elif typical(seen):
+            # The same typical cost the table above gives, the dearest task left out.
+            cost = typical(seen)
             fits.append([kind, window, f"{cost:.2f}%", f"{spare // cost:g}", every(window, cost), len(seen)])
         else:
             # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
@@ -220,10 +221,10 @@ def main():
     show(usage.table(
         ["kind", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"], fits, text=(0, 1),
         notes={"paced on": "the one window pace.toml names for this kind",
-               "cost per task": "mean % of that window one task has used",
+               "cost per task": "typical % of that window one task takes, as in the table above",
                "fit now": "tasks that can run now before the window falls behind even pace",
                "then one more every": "how often one more fits after that, as the window's pace catches up",
-               "tasks measured": "tasks the cost per task is the mean of"}))
+               "tasks measured": "tasks of this kind measured on that window"}))
 
 
 def show(lines):

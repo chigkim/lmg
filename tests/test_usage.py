@@ -56,3 +56,23 @@ def test_a_note_appends_one_row_under_one_header(tmp_path, monkeypatch):
         rows = list(csv.DictReader(book))
     assert [row["note"] for row in rows] == ["before: a task", "after: a task"]
     assert rows[0]["codex_week_left"] == "75" and rows[0]["claude_5h_left"] == ""
+
+
+def test_a_window_not_yet_started_reads_as_one_starting_now():
+    window = usage.line("5h limit:", 0, usage.unstarted("5h limit:", None))
+    assert (window.left, round(window.resets - time.time())) == (100, usage.FIVE_HOURS)
+    assert usage.unstarted("Weekly limit:", 123.0) == 123.0
+
+
+def test_an_agy_limit_logged_without_a_fraction_is_used_up(monkeypatch):
+    log = ['"displayName": "Five Hour Limit Remaining"', '"resetTime": "2099-01-01T00:00:00Z"',
+           '"displayName": "Weekly Limit Remaining"', '"resetTime": "2099-01-02T00:00:00Z"',
+           '"remainingFraction": 0.25', '"displayName": "Gemini Models"']
+
+    def agy(argv, **kwargs):
+        open(argv[argv.index("--log-file") + 1], "w", encoding="utf-8").write(chr(10).join(log))
+    monkeypatch.setattr(usage, "cli", lambda name: name)
+    monkeypatch.setattr(usage.subprocess, "run", agy)
+    group, five, week = usage.agy()
+    assert group.strip() == "Gemini Models"
+    assert (five.left, week.left) == (0, 25)

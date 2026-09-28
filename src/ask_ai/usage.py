@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -101,7 +102,7 @@ USAGE = "https://api.anthropic.com/api/oauth/usage"
 
 def claude():
     """Claude's limits from the endpoint `/usage` reads, which is free;
-    the Haiku call is kept for when the login token has expired.
+    the Haiku call is kept for when that request cannot be made or fails.
 
     The token is read into one local, put in one header and dropped. It is
     never printed, logged or written, and nothing that fails here carries
@@ -125,9 +126,19 @@ def claude():
         return _claude_by_call()
     names = {"five_hour": "5h limit:", "seven_day": "Weekly limit:"}
     return [line(label, windows[name]["utilization"],
-                 datetime.fromisoformat(
-                     windows[name]["resets_at"]).timestamp())
+                 unstarted(label, windows[name]["resets_at"]
+                           and datetime.fromisoformat(
+                               windows[name]["resets_at"]).timestamp()))
             for name, label in names.items() if windows.get(name)]
+
+
+def unstarted(label, resets):
+    """RESETS, or, for a window that has not started and so has no reset
+    (null, as after five idle hours), the one it would get if it started
+    now: a whole length from now."""
+    if resets:
+        return resets
+    return time.time() + (WEEK if label.startswith("Weekly") else FIVE_HOURS)
 
 
 def _claude_by_call():
@@ -148,7 +159,7 @@ def _claude_by_call():
                 f"(exit {run.returncode})"]
     names = {"five_hour": "5h limit:", "seven_day": "Weekly limit:"}
     return [line(names.get(name, name + ":"), window["utilization"] * 100,
-                 window["resetsAt"])
+                 unstarted(names.get(name, name), window.get("resetsAt")))
             for name, window in windows.items()]
 
 
@@ -159,6 +170,10 @@ def codex():
         [cli("codex"), "app-server"], stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
         encoding="utf-8", cwd=pathlib.Path.home())
+    # A server that never answers would hold every reading for ever; killed,
+    # its output closes and `answer` says it closed without answering.
+    guard = threading.Timer(30, server.kill)
+    guard.start()
     try:
         def send(message):
             server.stdin.write(json.dumps(message) + "\n")
@@ -179,6 +194,7 @@ def codex():
               "params": {"excludeResetCreditDetails": True}})
         reply = answer(2)
     finally:
+        guard.cancel()
         server.kill()
     if "error" in reply:
         return [f"  codex refused: {reply['error'].get('message')}"]
@@ -203,16 +219,20 @@ def agy():
     """
     # `agy models` can exit before its quota request is answered, which
     # leaves the log without it; asking costs nothing, so ask again.
+    # The verbose log is removed however the run ends, a timeout included,
+    # since nothing promises a level-3 log holds no header worth keeping.
     for _ in range(3):
         folder = pathlib.Path(tempfile.mkdtemp())
         log = folder / "agy.log"
-        subprocess.run([cli("agy"), "-v=3", "--log-file", str(log),
-                        "models"],
-                       capture_output=True, text=True, encoding="utf-8",
-                       timeout=120, cwd=pathlib.Path.home())
-        text = (log.read_text(encoding="utf-8", errors="replace")
-                if log.exists() else "")
-        shutil.rmtree(folder, ignore_errors=True)
+        try:
+            subprocess.run([cli("agy"), "-v=3", "--log-file", str(log),
+                            "models"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           timeout=120, cwd=pathlib.Path.home())
+            text = (log.read_text(encoding="utf-8", errors="replace")
+                    if log.exists() else "")
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
         if "Limit Remaining" in text:
             break
     field = re.compile(r'"(displayName|resetTime|remainingFraction)": '
@@ -228,8 +248,12 @@ def agy():
             shown = []
             for limit in sorted(limits, key=lambda l: l["label"] != "Five "
                                 "Hour Limit Remaining"):
-                if "fraction" not in limit or "reset" not in limit:
+                if "reset" not in limit:
                     continue
+                # A fraction of nought may be left out of the log's JSON,
+                # as protobuf leaves out a zero, so a limit with a reset and
+                # no fraction is one used up.
+                limit.setdefault("fraction", 0.0)
                 label = ("5h limit:" if limit["label"].startswith("Five")
                          else "Weekly limit:")
                 shown.append(line(label, 100 - limit["fraction"] * 100,

@@ -9,7 +9,7 @@ Hand one job to agy, Claude Code or Codex in its own git worktree of the reposit
 | `ai-plan [--hours N \| --since "YYYY-MM-DD HH:MM" \| --limits]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it, with tokens and what they would cost on the public API. `--limits` sizes each window in dollars from the ledger. |
 | `ai-pace [--fresh] [--brief]` | What each kind of task costs a window, from paired `before:` and `after:` rows in the ledger, and how many more fit now. |
 
-Only `ask-ai` runs a model. `ai-usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored. Only when that token has expired does it fall back to a one-word Haiku call.
+Only `ask-ai` runs a model. `ai-usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored. When that request cannot be made or fails -- an expired token, no credentials file, no network, or an error status -- it falls back to a one-word Haiku call, which costs a little and refreshes the login.
 
 ## Install
 

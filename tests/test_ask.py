@@ -221,3 +221,8 @@ def test_a_repository_s_home_is_beside_it_unless_homes_toml_names_one(repo, tmp_
     assert ask.home_of(repo, homes) == repo.parent / ".askai" / repo.name
     homes.write_text(f'[homes]\n"{repo.as_posix()}" = ".."\n', encoding="utf-8")
     assert ask.home_of(repo, homes) == repo.parent
+
+
+def test_claude_read_mode_is_the_three_tools_and_nothing_else():
+    assert ask.flags("claude", "read") == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
+                                           "--permission-mode", "dontAsk", "--strict-mcp-config"]
