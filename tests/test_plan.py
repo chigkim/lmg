@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from ai_usage import plan
@@ -42,3 +44,33 @@ def test_a_point_is_sized_by_the_calls_inside_one_window():
     after = call("gpt-6-sol", input=100_000, time=plan.stamp("2026-09-27 12:30"))
     points, usd = plan.per_point(ledger, [inside, after], "codex", "week", RATES)
     assert (points, usd) == (2, pytest.approx(0.2))
+
+
+def test_an_unpriced_call_leaves_a_window_unsized():
+    ledger = [{"time": "2026-09-27 10:00", "codex_week_left": "80", "codex_week_reset": "2026-10-03 01:00"},
+              {"time": "2026-09-27 12:00", "codex_week_left": "79", "codex_week_reset": "2026-10-03 01:00"}]
+    unknown = call("some-model", input=100_000, time=plan.stamp("2026-09-27 11:00"))
+    assert plan.per_point(ledger, [unknown], "codex", "week", RATES) == (1, None)
+
+
+def test_codex_input_is_less_its_cached_reads_and_cache_writes(tmp_path, monkeypatch):
+    folder = tmp_path / ".codex/sessions"
+    folder.mkdir(parents=True)
+    usage = {"input_tokens": 100, "cached_input_tokens": 30, "cache_write_input_tokens": 20, "output_tokens": 5}
+    (folder / "rollout-a.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        None,
+        {"type": "session_meta", "payload": {"model_provider": "openai"}},
+        {"type": "turn_context", "payload": {"model": "gpt-6-sol"}},
+        {"timestamp": "2026-09-27T10:00:00Z",
+         "payload": {"type": "token_count", "info": {"total_token_usage": usage}}}]), encoding="utf-8")
+    monkeypatch.setattr(plan, "HOME", tmp_path)
+    [c] = plan.codex(0)
+    assert (c.input, c.cache_read, c.cache_write, c.output) == (50, 30, 20, 5)
+
+
+def test_a_pi_provider_on_an_api_key_is_no_plan(tmp_path, monkeypatch):
+    (tmp_path / ".pi/agent").mkdir(parents=True)
+    (tmp_path / ".pi/agent/auth.json").write_text(json.dumps(
+        {"anthropic": {"type": "api_key"}, "openai-codex": {"type": "oauth"}}), encoding="utf-8")
+    monkeypatch.setattr(plan, "HOME", tmp_path)
+    assert plan.subscribed() == {"openai-codex"}

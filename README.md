@@ -15,10 +15,10 @@ Nothing here runs a model to find out. `ai-usage` asks `codex app-server` for Co
 Python 3.11 or later, no dependencies. Install it editable, because the ledger is written beside the scripts and a normal install would put it inside uv's tool folder, where the next reinstall deletes it:
 
 ```bash
-uv tool install -e D:/code/python/ai-usage
+uv tool install -e .
 ```
 
-The three commands then run from any folder. Edits to the checkout take effect at once; a change to `pyproject.toml` needs `uv tool install -e --reinstall D:/code/python/ai-usage`.
+The three commands then run from any folder. Edits to the checkout take effect at once; a change to `pyproject.toml` needs `uv tool install -e --reinstall .`.
 
 A plan whose client is not on `PATH` (`claude`, `codex`, `agy`) is reported as one that could not be asked, and the others are still read.
 

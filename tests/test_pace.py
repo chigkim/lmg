@@ -49,3 +49,11 @@ def test_pace_toml_refuses_a_window_that_does_not_exist(tmp_path):
     path.write_text('[paced]\ncritic = "codex_month"\n', encoding="utf-8")
     with pytest.raises(SystemExit, match="codex_month"):
         pace.paced(path)
+
+
+def test_a_reset_during_a_task_is_no_cost():
+    before = row("2026-09-27 10:00", "before: critic x", codex_5h=80)
+    after = row("2026-09-27 10:30", "after: critic x", codex_5h=70)
+    before["codex_5h_reset"], after["codex_5h_reset"] = "2026-09-27 10:15", "2026-09-27 15:15"
+    [(_, _, used, _)] = pace.tasks([before, after])
+    assert used == {}

@@ -83,13 +83,20 @@ def tasks(rows):
             used = {}
             for window in WINDOWS:
                 was, now = before[f"{window}_left"], row[f"{window}_left"]
-                if was and now and int(was) >= int(now):
+                if was and now and int(was) >= int(now) and same_window(before, row, window):
                     used[window] = int(was) - int(now)
             paired.append((name, moment(before["time"]), moment(row["time"]), used))
     return [(name, (end - start).total_seconds() / 60, used,
-             any(s < end and start < e for n, s, e, _ in paired
-                 if (n, s) != (name, start) and plan(n) == plan(name)))
-            for name, start, end, used in paired]
+             any(s < end and start < e for j, (n, s, e, _) in enumerate(paired)
+                 if j != i and plan(n) == plan(name)))
+            for i, (name, start, end, used) in enumerate(paired)]
+
+
+def same_window(before, after, window):
+    """Whether two readings are of one window: a reset time that moved is a new window, whose figure is no fall from
+    the old one's. A reading with no reset time, as the ledger's first rows are, is taken at its word."""
+    was, now = before[f"{window}_reset"], after[f"{window}_reset"]
+    return not (was and now) or abs((moment(now) - moment(was)).total_seconds()) <= 600
 
 
 def plan(name):
@@ -206,9 +213,9 @@ def main():
             cost = statistics.mean(seen)
             fits.append([kind, window, f"{cost:.2f}%", f"{spare // cost:g}", every(window, cost), len(seen)])
         else:
-            # Every task moved it 0%, so over all of them a task costs under 1%.
-            fits.append([kind, window, "0%", f"at least {spare * len(seen)}",
-                         f"{every(window, 1 / len(seen))} at most", len(seen)])
+            # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
+            # fallen in a window of its own, so the one bound they give is 1% a task.
+            fits.append([kind, window, "under 1%", f"at least {spare}", f"{every(window, 1)} at most", len(seen)])
     print("how many more tasks fit without falling behind pace")
     show(usage.table(
         ["kind", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"], fits, text=(0, 1),

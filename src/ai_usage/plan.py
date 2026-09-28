@@ -60,9 +60,11 @@ def lines(pattern, since):
         with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 try:
-                    yield path, json.loads(line)
+                    row = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(row, dict):  # a bare null or number is valid JSON and no record
+                    yield path, row
 
 
 def claude(since):
@@ -100,10 +102,21 @@ def codex(since):
             rise = {k: total.get(k, 0) - was.get(k, 0) for k in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens")}
             if not any(rise.values()):
                 continue
+            # input_tokens is the whole prompt, cached reads and cache writes included, so both come out of it.
             out.append(Call(when(row["timestamp"]), "codex", meta[path].get("originator", "codex"), model.get(path, "?"),
-                            rise["input_tokens"] - rise["cached_input_tokens"], rise["cached_input_tokens"],
+                            rise["input_tokens"] - rise["cached_input_tokens"] - rise["cache_write_input_tokens"],
+                            rise["cached_input_tokens"],
                             rise["cache_write_input_tokens"], 0, rise["output_tokens"]))
     return out
+
+
+def subscribed():
+    """The Pi providers signed in by subscription (OAuth) in ~/.pi/agent/auth.json. Only each entry's `type` is read."""
+    try:
+        entries = json.loads((HOME / ".pi/agent/auth.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {provider for provider, entry in entries.items() if isinstance(entry, dict) and entry.get("type") == "oauth"}
 
 
 def compaction_model():
@@ -185,6 +198,9 @@ def pi(since):
       characters a token. Claude Code may write that prompt to a cache at up to 2x input, so this is low if anything.
     """
     plans = {"anthropic": "claude", "openai-codex": "codex", "claude-bridge": "claude"}
+    # A provider signed in with an API key bills the API, not a plan, so only a subscription login counts.
+    plans = {provider: plan for provider, plan in plans.items()
+             if provider == "claude-bridge" or provider in subscribed()}
     hook, hermes = compaction_model(), hermes_model()
     current = {}  # session file -> (provider, model) last used
     session = collections.defaultdict(list)
@@ -397,7 +413,9 @@ def per_point(ledger, calls, plan, kind, table):
         if now < was:
             points += was - now
             spent += [c for c in calls if c.plan == plan and a <= c.time < b]
-    return points, summed(spent, table)[5]
+    *_, usd, unpriced = summed(spent, table)
+    # A call that cannot be priced would read as free and shrink the window; the dollars are unknown instead.
+    return points, None if unpriced else usd
 
 
 def limits(table):
@@ -408,6 +426,9 @@ def limits(table):
         return
     with open(usage.LEDGER, encoding="utf-8") as handle:
         ledger = list(csv.DictReader(handle))
+    if not ledger:
+        print(f"no readings yet in {usage.LEDGER}; `ai-usage NOTE` adds one")
+        return
     calls = everything(min(stamp(r["time"]) for r in ledger) - usage.WEEK)
     print("each plan window in dollars at public API rates")
     rows = []
@@ -418,19 +439,21 @@ def limits(table):
                 continue
             points, usd = per_point(ledger, calls, plan, kind, table)
             opened = window.resets - length
-            used = summed([c for c in calls if c.plan == plan and c.time >= opened], table)[5]
-            if not points:
-                # no fall in the ledger to size it by
-                rows.append([f"{plan} {kind}", f"{window.left}%", "0%", "-", "-", money(used), "-"])
+            *_, used, unpriced = summed([c for c in calls if c.plan == plan and c.time >= opened], table)
+            used = "-" if unpriced else money(used)
+            if not points or usd is None:
+                # no fall in the ledger to size it by, or a call in one that has no price
+                rows.append([f"{plan} {kind}", f"{window.left}%", f"{points}%", "-", "-", used, "-"])
                 continue
             rate = usd / points
             rows.append([f"{plan} {kind}", f"{window.left}%", f"{points}%", money(rate), money(rate * 100),
-                         money(used), money(rate * (100 - window.left))])
+                         used, money(rate * (100 - window.left))])
     print("\n".join(usage.table(
         ["window", "left", "drop measured", "$ per 1%", "full window", "spent (calls)", "spent (meter)"], rows,
         notes={"left": "% of this window left now",
                "drop measured": "every drop the ledger saw, summed over all past windows of that kind, so it can"
-                                " pass 100%; $ per 1% is measured over it, and - means nothing to measure yet",
+                                " pass 100%; $ per 1% is measured over it",
+               "-": "unknown: no drop to measure yet, or a call in it from a model with no price in prices.csv",
                "$ per 1%": "dollars of calls made while those drops happened, divided by the drop",
                "full window": "$ per 1% times 100",
                "spent (calls)": "every recorded call since this window opened, priced",
