@@ -137,16 +137,26 @@ def codex_counts(usage_):
     return counts(usage_.get("input_tokens", 0) - cached - wrote, cached, wrote, 0, usage_.get("output_tokens", 0))
 
 
-def read_codex(events):
-    """codex --json events -> (thread id, counts), from thread.started and the last turn.completed."""
-    thread, spent = "", None
+def codex_usage(events):
+    """codex --json events -> (thread id, the last turn.completed usage object, or None)."""
+    thread, usage_ = "", None
     for line in events.splitlines():
         event = json_in(line)
         if event.get("type") == "thread.started" and not thread:
             thread = event.get("thread_id", "")
         elif event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
-            spent = codex_counts(event["usage"])
-    return thread, spent
+            usage_ = event["usage"]
+    return thread, usage_
+
+
+def read_codex(events, before=""):
+    """codex --json events -> (thread id, counts). Its usage is a running total over the session (measured: a
+    follow-up's input held the first run's), so a follow-up's is its own less BEFORE, the previous run's events."""
+    thread, now = codex_usage(events)
+    if now is None:
+        return thread, None
+    was = codex_usage(before)[1] or {}
+    return thread, codex_counts({key: now.get(key, 0) - was.get(key, 0) for key in now})
 
 
 def events(text):
@@ -355,12 +365,12 @@ def installed(harness):
         raise Problem(str(missing))
 
 
-def last_of(runs, name, n, resume):
-    """The stream of the latest run before N of the agy conversation RESUME, or '' if none is kept."""
+def last_of(harness, runs, name, n, resume):
+    """The stream of the latest run before N of the session RESUME, or '' if none is kept."""
     for earlier in range(n - 1, 0, -1):
         path = runs / f"{name}-{earlier}.jsonl"
         text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-        if text and session("agy", text) == resume:
+        if text and session(harness, text) == resume:
             return text
     return ""
 
@@ -387,7 +397,8 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
     lines = []
     if harness == "codex":
         status = run(argv, tree, raw, log)
-        thread, spent = read_codex(raw.read_text(encoding="utf-8", errors="replace"))
+        thread, spent = read_codex(raw.read_text(encoding="utf-8", errors="replace"),
+                                   last_of(harness, runs, name, n, resume) if resume else "")
         lines.append(f"session id: {thread}")
     else:
         status = run(argv, tree, raw)
@@ -396,7 +407,7 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
             said, sid, spent, trouble = read_claude(text)
             lines.append(f"session id: {sid}")
         else:
-            said, sid, spent, trouble = read_agy(text, last_of(runs, name, n, resume) if resume else "")
+            said, sid, spent, trouble = read_agy(text, last_of(harness, runs, name, n, resume) if resume else "")
             lines.append(f"conversation id: {sid}")
         if trouble:
             lines.append(f"{harness} {trouble}")

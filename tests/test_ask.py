@@ -52,6 +52,17 @@ def test_codex_input_leaves_out_what_was_cached_or_written_to_cache():
     assert spent == ask.counts(90, 200, 10, 0, 9)
 
 
+def test_a_codex_follow_up_books_only_its_own_tokens():
+    # The totals a live gpt-6-luna follow-up reported: the second run's include the first's.
+    first = stream({"type": "thread.started", "thread_id": "t1"},
+                   {"type": "turn.completed", "usage": {"input_tokens": 43662, "cached_input_tokens": 39168,
+                                                        "output_tokens": 132}})
+    second = stream({"type": "thread.started", "thread_id": "t1"},
+                    {"type": "turn.completed", "usage": {"input_tokens": 88046, "cached_input_tokens": 78336,
+                                                         "output_tokens": 241}})
+    assert ask.read_codex(second, first)[1] == ask.counts(44384 - 39168, 39168, 0, 0, 109)
+
+
 def stream(*events):
     return "\n".join(json.dumps(event) for event in events) + "\n"
 
@@ -186,8 +197,8 @@ def test_a_fresh_job_is_not_handed_an_earlier_job_s_worktree(repo, tmp_path, mon
 def test_an_agy_follow_up_subtracts_the_last_run_of_its_own_conversation(tmp_path):
     (tmp_path / "x-1.jsonl").write_text(agy_result(conversation_id="c1", usage={"input_tokens": 100}))
     (tmp_path / "x-2.jsonl").write_text(agy_result(conversation_id="c2", usage={"input_tokens": 5}))
-    assert ask.session("agy", ask.last_of(tmp_path, "x", 3, "c1")) == "c1"
-    assert ask.last_of(tmp_path, "x", 3, "gone") == ""
+    assert ask.session("agy", ask.last_of("agy", tmp_path, "x", 3, "c1")) == "c1"
+    assert ask.last_of("agy", tmp_path, "x", 3, "gone") == ""
 
 
 def fake_harness(monkeypatch, tmp_path):
