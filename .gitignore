@@ -1,5 +1,15 @@
+<<<<<<< HEAD
 # Your own record of what jobs spent, written beside the script: not the tool's to share.
 /src/ask_ai/token-ledger.csv
 
 __pycache__/
 .venv/
+=======
+# Your own readings and settings, written beside the scripts: not the tool's to share.
+/src/ai_usage/usage-ledger.csv
+/src/ai_usage/pace.toml
+
+__pycache__/
+.venv/
+.pytest_cache/
+>>>>>>> ai-usage-import
