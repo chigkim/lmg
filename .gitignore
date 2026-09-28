@@ -2,6 +2,7 @@
 /src/ask_ai/usage-ledger.csv
 /src/ask_ai/token-ledger.csv
 /src/ask_ai/pace.toml
+/src/ask_ai/homes.toml
 
 __pycache__/
 .venv/

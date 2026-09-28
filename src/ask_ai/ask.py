@@ -2,10 +2,11 @@
 
     ask-ai agy|claude|codex read|edit PROMPT [ID]   # a job, or a follow-up to the one ID names
     ask-ai review SHA                               # codex exec review of one commit
-    ask-ai clean agy|claude|codex NAME              # remove a job's worktree and branch
+    ask-ai clean agy|claude|codex NAME [--force]    # remove a job's worktree and branch, if nothing is lost
+    ask-ai list                                     # every open job: its runs, answer, changes and id
 
     --repo PATH    the repository, instead of the one the current folder is in
-    --home PATH    where worktrees/ and runs/ go, instead of the folder the repository sits in
+    --home PATH    where worktrees/ and runs/ go, instead of the repository's home
     --model NAME   the harness's model, instead of DEFAULTS
     --timeout T    agy's print timeout, 3600s unless given
 
@@ -16,11 +17,17 @@ prompt and sandbox, so it may write, edit and run anything the machine lets it:
     claude  read: only Read, Grep and Glob, and no MCP servers
     codex   read: the read-only sandbox, where it still runs commands to read with
 
+A repository's home is PARENT/.askai/REPO, beside it, unless `homes.toml` beside this file names another:
+
+    [homes]
+    "D:/code/game" = "D:/code"      # a relative home is taken from the repository
+
 The job is named after the prompt file, less `.md` and a trailing `-prompt`. Its worktree is
 HOME/worktrees/HARNESS-NAME, on a branch of that name at HEAD, made on first use and reused by a follow-up. The
 prompt is moved in as TASK.md, with a numbered copy kept as HOME/runs/HARNESS/NAME-task-N.md, and the agent is
 told only to read TASK.md there. The harness's final message is the answer, HOME/runs/HARNESS/NAME-N.md, beside
-its raw output; the id to follow up with is printed. A follow-up is a new prompt file of the same name, plus that
+its raw output; the id to follow up with is printed. The raw output is streamed, so a run stopped part way still
+holds the id, and `list` finds it there. A follow-up is a new prompt file of the same name, plus that
 id, and may change mode.
 
 A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME` and `after: ...`, so the
@@ -34,6 +41,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -44,6 +52,7 @@ from ask_ai import plan, usage
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
 TOKENS = pathlib.Path(__file__).parent / "token-ledger.csv"
+HOMES = pathlib.Path(__file__).parent / "homes.toml"
 TOKEN_FIELDS = ["time", "note", "repo", "model", "input", "cache_read", "cache_write", "cache_write_1h", "output", "usd"]
 
 ASK = "Read TASK.md in this folder and do what it says."
@@ -66,10 +75,15 @@ def job_name(prompt):
     return name[:-len("-prompt")] if name.endswith("-prompt") else name
 
 
-def ask_text(harness, mode):
+# A follow-up that said ASK again was answered from the old TASK.md the session had already read (measured).
+AGAIN = "TASK.md now holds a new task, replacing the one before: read it again and do what it says now."
+
+
+def ask_text(harness, mode, resume=None):
+    text = AGAIN if resume else ASK
     if mode == "edit":
-        return ASK
-    return ASK + READ_ONLY["codex" if harness == "codex" else "other"]
+        return text
+    return text + READ_ONLY["codex" if harness == "codex" else "other"]
 
 
 def flags(harness, mode):
@@ -85,17 +99,19 @@ def flags(harness, mode):
 
 def command(harness, mode, model, tree, answer, resume=None, timeout="3600s"):
     """The argv that runs one job in TREE. A codex resume keeps neither sandbox nor folder, so the sandbox is set again."""
-    ask = ask_text(harness, mode)
+    ask = ask_text(harness, mode, resume)
     if harness == "codex":
         if resume:
             again = ["-c", 'sandbox_mode="read-only"'] if mode == "read" else flags(harness, mode)
             return ["codex", "exec", "resume", resume, "--json", "-m", model, *again, "-o", str(answer), ask]
         return ["codex", "exec", "--json", "-m", model, *flags(harness, mode), "-C", str(tree), "-o", str(answer), ask]
+    # The prompt goes straight after -p: --tools takes several values and would swallow a prompt that followed it.
     if harness == "claude":
-        return ["claude", "-p", "--output-format", "json", "--model", model, *flags(harness, mode),
-                *(["--resume", resume] if resume else []), ask]
+        return ["claude", "-p", ask, "--output-format", "stream-json", "--verbose", "--model", model,
+                *flags(harness, mode), *(["--resume", resume] if resume else [])]
     return ["agy", *flags(harness, mode), "--model", model, "--print-timeout", timeout, "--add-dir", str(tree),
-            "--output-format", "json", *(["--conversation", resume] if resume else []), "-p", ask]
+            "--output-format", "stream-json", *(["--conversation", resume] if resume else []), "-p", ask]
+
 
 
 def json_in(text):
@@ -133,21 +149,55 @@ def read_codex(events):
     return thread, spent
 
 
+def events(text):
+    """The JSON objects of a stream, one a line; a line that is not one is passed over."""
+    for line in text.splitlines():
+        if line.lstrip().startswith("{"):
+            event = json_in(line)
+            if event:
+                yield event
+
+
+def final(harness, text):
+    """The result a claude or agy stream ends with, or {} for a run that stopped before it."""
+    for event in events(text):
+        if harness == "claude" and event.get("type") == "result":
+            return event
+        if harness == "agy" and event.get("event") == "result" and isinstance(event.get("result"), dict):
+            return event["result"]
+    return {}
+
+
+def session(harness, text):
+    """The id to follow up with, from the first event that carries one, so a run stopped part way still has it."""
+    key = {"agy": "conversation_id", "claude": "session_id", "codex": "thread_id"}[harness]
+    for event in events(text):
+        nested = event.get("result")
+        found = event.get(key) or (nested.get(key) if isinstance(nested, dict) else "")
+        if found:
+            return found
+    return ""
+
+
 def read_claude(text):
-    """claude -p JSON -> (answer, session id, counts). Its usage is the run's total; cache writes are kept an hour."""
-    out = json_in(text)
+    """A claude stream -> (answer, session id, counts, trouble). Its usage is the run's total; cache writes are kept
+    an hour. TROUBLE is why the run did not finish, or ''."""
+    out = final("claude", text)
     spent = out.get("usage") or {}
     hour = (spent.get("cache_creation") or {}).get("ephemeral_1h_input_tokens", 0)
-    return out.get("result") or "", out.get("session_id", ""), counts(
+    trouble = "" if out else "ended early: no result, so no answer; follow up with the id"
+    if out.get("is_error"):
+        trouble = f"failed: {out.get('subtype', 'error')}"
+    return out.get("result") or "", session("claude", text), counts(
         spent.get("input_tokens", 0), spent.get("cache_read_input_tokens", 0),
-        spent.get("cache_creation_input_tokens", 0), hour, spent.get("output_tokens", 0))
+        spent.get("cache_creation_input_tokens", 0), hour, spent.get("output_tokens", 0)), trouble
 
 
 def read_agy(text, before=""):
-    """agy JSON -> (answer, conversation id, counts, trouble). Its usage is a running total over the conversation, so
-    a follow-up's is its own less BEFORE, the previous run's output. Its output includes thinking; it reports no cache
-    writes. TROUBLE is why the run did not finish, or ''."""
-    out, was = json_in(text), (json_in(before).get("usage") or {})
+    """An agy stream -> (answer, conversation id, counts, trouble). Its usage is a running total over the
+    conversation, so a follow-up's is its own less BEFORE, the previous run's stream. Its output includes thinking; it
+    reports no cache writes. TROUBLE is why the run did not finish, or ''."""
+    out, was = final("agy", text), (final("agy", before).get("usage") or {})
     now = out.get("usage") or {}
 
     def spent(key):
@@ -159,7 +209,9 @@ def read_agy(text, before=""):
     elif out.get("denied_actions"):
         denied = ", ".join(d.get("display_name") or d.get("action", "?") for d in out["denied_actions"])
         trouble = f"denied {denied}: read mode refused it and the run ended there"
-    return out.get("response") or "", out.get("conversation_id", ""), counts(
+    elif not out:
+        trouble = "ended early: no result, so no answer; follow up with the id"
+    return out.get("response") or "", session("agy", text), counts(
         spent("input_tokens"), spent("cache_read_tokens"), 0, 0, spent("output_tokens")), trouble
 
 
@@ -208,10 +260,13 @@ def common(folder):
 
 
 def worktree(repo, tree, resume):
-    """Make TREE a worktree of REPO at HEAD, or check that the one there already is."""
+    """Make TREE a worktree of REPO at HEAD, or, for a follow-up, check that the one there already is. A fresh job
+    is refused a worktree left by an earlier one, which would hand it that job's changes as its own."""
     if tree.exists():
         if common(tree) != common(repo):
             raise Problem(f"{tree} is there but is not a worktree of {repo}")
+        if not resume:
+            raise Problem(f"{tree} is left from an earlier job: follow it up with its id (`ask-ai list`), or clean it")
         return
     if resume:
         raise Problem(f"no worktree {tree} to follow up in")
@@ -292,10 +347,29 @@ def run(argv, cwd, out, err=None):
                 errs.close()
 
 
+def installed(harness):
+    """Refuse, before anything is made or booked, a harness that is not on PATH."""
+    try:
+        usage.cli(harness)
+    except RuntimeError as missing:
+        raise Problem(str(missing))
+
+
+def last_of(runs, name, n, resume):
+    """The stream of the latest run before N of the agy conversation RESUME, or '' if none is kept."""
+    for earlier in range(n - 1, 0, -1):
+        path = runs / f"{name}-{earlier}.jsonl"
+        text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        if text and session("agy", text) == resume:
+            return text
+    return ""
+
+
 def job(harness, mode, prompt, resume, repo, home, model, timeout):
     prompt = pathlib.Path(prompt).resolve()
     if not prompt.is_file():
         raise Problem(f"no prompt file {prompt}")
+    installed(harness)
     name = job_name(prompt)
     tree = home / "worktrees" / f"{harness}-{name}"
     runs = home / "runs" / harness
@@ -303,33 +377,30 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
     runs.mkdir(parents=True, exist_ok=True)
     n = numbered(runs, name)
     (runs / f"{name}-task-{n}.md").write_bytes(prompt.read_bytes())
-    prompt.replace(tree / "TASK.md")
-    out = runs / f"{name}-{n}"
+    shutil.move(prompt, tree / "TASK.md")  # os.replace cannot cross drives
+    # Each path is named whole: with_suffix would take a dot in the job's name for the start of a suffix.
+    answer, raw, log = (runs / f"{name}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
     note = f"{harness} {name}" + (" (resumed)" if resume else "")
-    answer = out.with_suffix(".md")
     reading("before", note)
     print(f"{harness} {mode}, {model}, in {tree}", flush=True)
     argv = command(harness, mode, model, tree, answer, resume, timeout)
     lines = []
     if harness == "codex":
-        status = run(argv, tree, out.with_suffix(".jsonl"), out.with_suffix(".log"))
-        thread, spent = read_codex(out.with_suffix(".jsonl").read_text(encoding="utf-8", errors="replace"))
+        status = run(argv, tree, raw, log)
+        thread, spent = read_codex(raw.read_text(encoding="utf-8", errors="replace"))
         lines.append(f"session id: {thread}")
     else:
-        raw = out.with_suffix(".json")
         status = run(argv, tree, raw)
         text = raw.read_text(encoding="utf-8", errors="replace")
         if harness == "claude":
-            said, sid, spent = read_claude(text)
+            said, sid, spent, trouble = read_claude(text)
             lines.append(f"session id: {sid}")
         else:
-            before = runs / f"{name}-{n - 1}.json"
-            previous = before.read_text(encoding="utf-8", errors="replace") if resume and before.exists() else ""
-            said, sid, spent, trouble = read_agy(text, previous)
+            said, sid, spent, trouble = read_agy(text, last_of(runs, name, n, resume) if resume else "")
             lines.append(f"conversation id: {sid}")
-            if trouble:
-                lines.append(f"agy {trouble}")
-                status = status or (124 if trouble.startswith("timed") else 1)
+        if trouble:
+            lines.append(f"{harness} {trouble}")
+            status = status or (124 if trouble.startswith("timed") else 1)
         answer.write_text(said, encoding="utf-8")
     if spent:
         lines.append(book(note, repo.name, model, spent))
@@ -339,23 +410,27 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
 
 
 def review(sha, repo, home, model):
-    if git("rev-parse", "-q", "--verify", f"{sha}^{{commit}}", cwd=repo).returncode:
+    found = git("rev-parse", "-q", "--verify", f"{sha}^{{commit}}", cwd=repo)
+    if found.returncode:
         raise Problem(f"no commit {sha} in {repo}")
+    installed("codex")
+    # Named after the commit's own hash, so `v1.2` or `origin/main` is neither a suffix nor a folder.
+    sha = found.stdout.strip()[:12]
     runs = home / "runs" / "codex"
     runs.mkdir(parents=True, exist_ok=True)
-    out = runs / f"review-{sha}"
+    answer, raw, log = (runs / f"review-{sha}.{kind}" for kind in ("md", "jsonl", "log"))
     note = f"review {sha}"
     reading("before", note)
     started = time.time()
-    status = run(["codex", "exec", "-m", model, "-s", "read-only", "-o", str(out.with_suffix(".md")), "review",
-                  "--json", "--commit", sha], repo, out.with_suffix(".jsonl"), out.with_suffix(".log"))
-    thread, _ = read_codex(out.with_suffix(".jsonl").read_text(encoding="utf-8", errors="replace"))
+    status = run(["codex", "exec", "-m", model, "-s", "read-only", "-o", str(answer), "review",
+                  "--json", "--commit", sha], repo, raw, log)
+    thread, _ = read_codex(raw.read_text(encoding="utf-8", errors="replace"))
     print(f"session id: {thread}")
     # A review's own events count no tokens (measured): the work is a child session, whose rollout names it as parent.
     spent = child_usage(thread, started)
     if spent:
         print(book(note, repo.name, model, spent))
-    print(f"answer: {out.with_suffix('.md')}")
+    print(f"answer: {answer}")
     return status, note, None
 
 
@@ -378,12 +453,24 @@ def child_usage(thread, since, sessions=pathlib.Path.home() / ".codex" / "sessio
     return None
 
 
-def clean(harness, name, repo, home):
+def changes(tree):
+    """TREE's uncommitted changes, TASK.md left out, as `git status --porcelain` lines."""
+    return [line for line in git("status", "--porcelain", cwd=tree).stdout.splitlines()
+            if line[3:] != "TASK.md"]
+
+
+def clean(harness, name, repo, home, force=False):
+    """Remove a job's worktree and branch; unless FORCE, not while it holds work that would be lost with them."""
     tree = home / "worktrees" / f"{harness}-{name}"
     if not tree.exists():
         raise Problem(f"no worktree {tree}")
     if common(tree) != common(repo):
         raise Problem(f"{tree} is not a worktree of {repo}")
+    if not force:
+        unmerged = git("rev-list", "--count", "HEAD.." + tree.name, cwd=repo).stdout.strip()
+        if changes(tree) or unmerged not in ("", "0"):
+            raise Problem(f"{tree} has {len(changes(tree))} uncommitted files and {unmerged or 0} commits not in"
+                          f" {repo.name}'s HEAD: merge what is worth keeping, or clean with --force")
     for step in (("worktree", "remove", "--force", str(tree)), ("branch", "-D", "-q", tree.name)):
         done = git(*step, cwd=repo)
         if done.returncode:
@@ -391,14 +478,61 @@ def clean(harness, name, repo, home):
     print(f"removed {tree} and its branch")
 
 
+def home_of(repo, homes=None):
+    """Where REPO's worktrees/ and runs/ go: what HOMES (homes.toml) names for it, else PARENT/.askai/REPO."""
+    import tomllib
+    path = homes or HOMES
+    named = {}
+    if path.exists():
+        with path.open("rb") as handle:
+            named = tomllib.load(handle).get("homes", {})
+    for key, value in named.items():
+        if pathlib.Path(key).resolve() == repo:
+            return (repo / value).resolve()
+    return repo.parent / ".askai" / repo.name
+
+
+def jobs(repo, home):
+    """One row a worktree of REPO under HOME: job, runs, age, answer, changes, id."""
+    rows = []
+    folder = home / "worktrees"
+    for tree in sorted(folder.iterdir()) if folder.exists() else ():
+        harness, _, name = tree.name.partition("-")
+        if harness not in HARNESSES or not tree.is_dir() or common(tree) != common(repo):
+            continue
+        runs = home / "runs" / harness
+        n = numbered(runs, name) - 1
+        last = runs / f"{name}-{n}.jsonl"
+        text = last.read_text(encoding="utf-8", errors="replace") if last.exists() else ""
+        answer = runs / f"{name}-{n}.md"
+        said = "yes" if answer.exists() and answer.stat().st_size else "no"
+        changed = changes(tree)
+        age = usage.span(time.time() - (last if last.exists() else tree).stat().st_mtime)
+        rows.append([tree.name, n, age, said, len(changed), session(harness, text) or "-"])
+    return rows
+
+
+def listing(repo, home):
+    rows = jobs(repo, home)
+    if not rows:
+        print(f"no open jobs for {repo} in {home / 'worktrees'}")
+        return
+    print("\n".join(usage.table(["job", "runs", "last run", "answer", "changed files", "id"], rows,
+                                text=(0, 3, 5), notes={
+                                    "last run": "how long ago its latest output was written",
+                                    "changed files": "uncommitted, TASK.md left out",
+                                    "id": "what a follow-up passes; - if no run got far enough to say"})))
+
+
 def parse(argv):
     parser = argparse.ArgumentParser(prog="ask-ai", description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit PROMPT [ID], review SHA, or clean ...")
+    parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit PROMPT [ID], review SHA, clean ..., list")
     parser.add_argument("--repo", help="the repository; the one the current folder is in unless given")
-    parser.add_argument("--home", help="where worktrees/ and runs/ go; the folder the repository sits in unless given")
+    parser.add_argument("--home", help="where worktrees/ and runs/ go; homes.toml's or PARENT/.askai/REPO unless given")
     parser.add_argument("--model", help="the harness's model instead of its default")
     parser.add_argument("--timeout", default="3600s", help="agy's print timeout (default 3600s)")
+    parser.add_argument("--force", action="store_true", help="clean a worktree even though it holds unmerged work")
     return parser.parse_args(argv)
 
 
@@ -409,7 +543,7 @@ def main(argv=None):
         bound()
     try:
         repo = toplevel(pathlib.Path(args.repo or os.getcwd()).resolve())
-        home = pathlib.Path(args.home).resolve() if args.home else repo.parent
+        home = pathlib.Path(args.home).resolve() if args.home else home_of(repo)
         what = words[0]
         if what in HARNESSES:
             if len(words) not in (3, 4) or words[1] not in ("read", "edit"):
@@ -423,10 +557,15 @@ def main(argv=None):
         elif what == "clean":
             if len(words) != 3 or words[1] not in HARNESSES:
                 raise Problem("ask-ai clean agy|claude|codex NAME")
-            clean(words[1], words[2], repo, home)
+            clean(words[1], words[2], repo, home, args.force)
+            return 0
+        elif what == "list":
+            if len(words) != 1:
+                raise Problem("ask-ai list")
+            listing(repo, home)
             return 0
         else:
-            raise Problem(f"unknown {what}: agy, claude, codex, review or clean")
+            raise Problem(f"unknown {what}: agy, claude, codex, review, clean or list")
     except Problem as problem:
         print(problem, file=sys.stderr)
         return 2

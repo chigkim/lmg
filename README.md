@@ -4,7 +4,7 @@ Hand one job to agy, Claude Code or Codex in its own git worktree of the reposit
 
 | Command | What it does |
 | --- | --- |
-| `ask-ai HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side. `review SHA` and `clean HARNESS NAME` are its other two forms. |
+| `ask-ai HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side. `review SHA`, `clean HARNESS NAME` and `list` are its other forms. |
 | `ai-usage [NOTE]` | Each plan's 5-hour and weekly windows: percent left, when each resets, and how that stands against an even pace. With a note, it also adds a row to the ledger. |
 | `ai-plan [--hours N \| --since "YYYY-MM-DD HH:MM" \| --limits]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it, with tokens and what they would cost on the public API. `--limits` sizes each window in dollars from the ledger. |
 | `ai-pace [--fresh] [--brief]` | What each kind of task costs a window, from paired `before:` and `after:` rows in the ledger, and how many more fit now. |
@@ -28,27 +28,36 @@ A plan whose client is not on `PATH` (`claude`, `codex`, `agy`) is reported as o
 ```bash
 ask-ai agy|claude|codex read|edit PROMPT [ID]   # a job, or a follow-up to the one ID names
 ask-ai review SHA                               # codex exec review of one commit
-ask-ai clean agy|claude|codex NAME              # remove a job's worktree and branch
+ask-ai clean agy|claude|codex NAME [--force]    # remove a job's worktree and branch, if nothing is lost
+ask-ai list                                     # every open job: its runs, answer, changes and id
 ```
 
 | Option | What it does |
 | --- | --- |
 | `--repo PATH` | The repository, instead of the one the current folder is in. |
-| `--home PATH` | Where `worktrees/` and `runs/` go, instead of the folder the repository sits in. |
+| `--home PATH` | Where `worktrees/` and `runs/` go, instead of the repository's home. |
 | `--model NAME` | The harness's model, instead of its default: `gemini-3.8-flash-medium`, `claude-opus-5-5`, `gpt-6-sol`. |
 | `--timeout T` | agy's print timeout, `3600s` unless given. |
+| `--force` | `clean` only: remove the worktree even though it holds uncommitted files or unmerged commits. |
+
+A repository's home is `PARENT/.askai/REPO`, a folder beside it, so repositories that share a parent folder do not share jobs. `src/ask_ai/homes.toml`, gitignored, names another for a repository; a relative home is taken from the repository:
+
+```toml
+[homes]
+"D:/code/game" = ".."    # D:/code/worktrees and D:/code/runs
+```
 
 A job is named after its prompt file, less `.md` and a trailing `-prompt`: `fix-ledger-prompt.md` is the job `fix-ledger`.
 
-1. `ask-ai` makes `HOME/worktrees/HARNESS-NAME`, a worktree on a branch of that name at `HEAD`, or reuses it for a follow-up.
+1. `ask-ai` makes `HOME/worktrees/HARNESS-NAME`, a worktree on a branch of that name at `HEAD`, or reuses it for a follow-up. A new job whose worktree is still there from an earlier one is refused, rather than handed that job's changes.
 2. It moves the prompt in as `TASK.md` and keeps a numbered copy as `HOME/runs/HARNESS/NAME-task-N.md`.
 3. It takes a reading as `before: HARNESS NAME`, runs the harness in the worktree told only to read `TASK.md`, and takes the `after:` reading.
-4. The harness's last message is the answer, `HOME/runs/HARNESS/NAME-N.md`, beside its raw output. The session id to follow up with is printed.
+4. The harness's last message is the answer, `HOME/runs/HARNESS/NAME-N.md`, beside its raw output, `NAME-N.jsonl`. The session id to follow up with is printed. The raw output is streamed as the job runs, so a job stopped part way still has its id, and `ask-ai list` shows it.
 5. One row goes to `src/ask_ai/token-ledger.csv`: time, job, repository, model, uncached input, cache reads, cache writes, output, and the public-API cost.
 
-Edit work is left as an uncommitted diff in the worktree for you to review, test and merge. `ask-ai clean HARNESS NAME` removes the worktree and its branch.
+Edit work is left as an uncommitted diff in the worktree for you to review, test and merge. `ask-ai clean HARNESS NAME` removes the worktree and its branch, and refuses while it holds uncommitted files (`TASK.md` aside) or commits that `HEAD` has not got, unless given `--force`.
 
-A follow-up is a new prompt file of the same name plus the id: `ask-ai codex edit fix-ledger-prompt.md <id>`. It runs in the same worktree and may change mode.
+A follow-up is a new prompt file of the same name plus the id: `ask-ai codex edit fix-ledger-prompt.md <id>`. It runs in the same worktree and may change mode. The agent is told that `TASK.md` now holds a new task, because a session told only to read it again answered the old one from memory. An agy follow-up books only its own tokens: agy's count runs over the whole conversation, so the last earlier run of the same conversation is taken off it.
 
 ### Modes
 
@@ -57,7 +66,7 @@ A follow-up is a new prompt file of the same name plus the id: `ask-ai codex edi
 | Harness | `read` | `edit` |
 | --- | --- | --- |
 | agy | No bypass flag, so headless agy denies every write and command. A denial ends the run with no answer, and `ask-ai` says so. | `--dangerously-skip-permissions` |
-| claude | Only `Read`, `Grep` and `Glob`, and no MCP servers. | `--dangerously-skip-permissions` |
+| claude | Only `Read`, `Grep` and `Glob`, and no MCP servers. Hooks in your settings or the repository's still run. | `--dangerously-skip-permissions` |
 | codex | The read-only sandbox, where it may still run commands to read with. | `--dangerously-bypass-approvals-and-sandbox` |
 
 A worktree is where a job starts, not a fence. An edit job can reach anything your account can, and a read job can read files outside the worktree.
