@@ -23,10 +23,10 @@ told only to read TASK.md there. The harness's final message is the answer, HOME
 its raw output; the id to follow up with is printed. A follow-up is a new prompt file of the same name, plus that
 id, and may change mode.
 
-A reading of each plan's windows goes to ai-usage's ledger as `before: HARNESS NAME` and `after: ...`, so the
-harness is the kind `ai-pace` costs. One row a job goes to `token-ledger.csv` beside this file: the repository,
-the uncached input, cache reads, cache writes and output, which add up to what the model read and wrote, and what
-they would cost on the public API at ai-usage's prices.
+A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME` and `after: ...`, so the
+harness is the kind `ai-pace` costs. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
+cache reads, cache writes and output, which add up to what the model read and wrote, and what they would cost on
+the public API at the rates in `prices.csv`. All three sit beside this file.
 """
 import argparse
 import csv
@@ -39,7 +39,7 @@ import sys
 import time
 from datetime import datetime
 
-from ai_usage import plan, usage
+from ask_ai import plan, usage
 
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
@@ -434,7 +434,7 @@ def main(argv=None):
     print("\n".join(reading("after", note)))
     print()
     sys.stdout.flush()
-    subprocess.run([sys.executable, "-m", "ai_usage.pace", "--brief"], env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    subprocess.run([sys.executable, "-m", "ask_ai.pace", "--brief"], env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     if cleanup:
         harness, name = cleanup
         print(f"\nREMINDER: when the answer is reviewed and anything worth keeping is merged, remove the worktree:\n"

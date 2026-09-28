@@ -34,7 +34,7 @@ import pathlib
 import re
 import sqlite3
 
-from ai_usage import usage
+from ask_ai import usage
 
 HOME = pathlib.Path.home()
 PRICES = pathlib.Path(__file__).with_name("prices.csv")

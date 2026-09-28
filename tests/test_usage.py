@@ -1,7 +1,7 @@
 import csv
 import time
 
-from ai_usage import usage
+from ask_ai import usage
 
 
 def test_a_window_spent_evenly_is_on_pace():

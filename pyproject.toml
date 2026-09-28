@@ -1,16 +1,16 @@
 [project]
 name = "ask-ai"
 version = "0.1.0"
-description = "Hand one job to agy, Claude Code or Codex in its own git worktree, and record what it spent."
+description = "Hand one job to agy, Claude Code or Codex in its own git worktree, and watch how much of each plan's windows is left."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["ai-usage"]
+dependencies = []
 
 [project.scripts]
 ask-ai = "ask_ai.ask:main"
-
-[tool.uv.sources]
-ai-usage = { path = "../ai-usage", editable = true }
+ai-usage = "ask_ai.usage:main"
+ai-plan = "ask_ai.plan:main"
+ai-pace = "ask_ai.pace:main"
 
 [dependency-groups]
 dev = ["pytest"]

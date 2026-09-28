@@ -41,7 +41,7 @@ import sys
 import tomllib
 from datetime import datetime
 
-from ai_usage import usage
+from ask_ai import usage
 
 LENGTH = {"5h": 5 * 3600, "week": 7 * 24 * 3600}
 WINDOWS = usage.WINDOWS

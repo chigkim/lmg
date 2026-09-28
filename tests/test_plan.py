@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ai_usage import plan
+from ask_ai import plan
 
 RATES = {"gpt-6-sol": {"input": 2.0, "cache_read": 0.2, "cache_write": 2.5, "cache_write_1h": 2.5, "output": 10.0}}
 
