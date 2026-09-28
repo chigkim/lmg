@@ -1,0 +1,5 @@
+# Your own record of what jobs spent, written beside the script: not the tool's to share.
+/src/ask_ai/token-ledger.csv
+
+__pycache__/
+.venv/
