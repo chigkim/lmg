@@ -27,6 +27,11 @@ def test_a_table_is_markdown_padded_to_line_up():
         "| worker | 12.5% |"]
 
 
+def test_a_table_lists_what_its_headers_mean_under_it():
+    lines = usage.table(["kind", "cost"], [["critic", "3%"]], notes={"cost": "% of the window"})
+    assert lines[-2:] == ["", "- cost: % of the window"]
+
+
 def test_a_window_spent_early_is_over_pace():
     window = usage.line("Weekly limit:", 60, time.time() + usage.WEEK * 0.9)
     assert window.kind == "week"

@@ -361,7 +361,11 @@ def report(since, table):
             note = ", ".join(sorted(unpriced))
             rows.append([plan, source, n, f"{i:,}", f"{r:,}", f"{w:,}", f"{o:,}", money(usd), note])
     print("\n".join(usage.table(
-        ["plan", "source", "calls", "input", "cache read", "cache write", "output", "API cost", "unpriced models"], rows, text=(0, 1, 8))))
+        ["plan", "source", "calls", "input", "cache read", "cache write", "output", "API cost", "unpriced models"], rows, text=(0, 1, 8),
+        notes={"source": "what made the calls; all is the plan's sources summed",
+               "input, cache read, cache write, output": "tokens",
+               "API cost": "what those tokens would cost at the public API rates in prices.csv",
+               "unpriced models": "models with no price in prices.csv, left out of API cost"})))
 
 
 def stamp(text):
@@ -422,14 +426,16 @@ def limits(table):
             rate = usd / points
             rows.append([f"{plan} {kind}", f"{window.left}%", f"{points}%", money(rate), money(rate * 100),
                          money(used), money(rate * (100 - window.left))])
-    print("\n".join(usage.table(["window", "left", "drop measured", "$ per 1%", "full window",
-                                 "spent (calls)", "spent (meter)"], rows)))
-    print("\n- drop measured: every drop the ledger saw, summed over all past windows of that kind, so it can pass"
-          " 100%. It is what $ per 1% is measured over, and - means nothing to measure yet."
-          "\n- full window: $ per 1% times 100."
-          "\n- spent (calls): every recorded call since this window opened, priced."
-          "\n- spent (meter): the % this window has lost times $ per 1%. It differs from spent (calls) by what the"
-          " rate misjudges, or by calls these records do not hold.")
+    print("\n".join(usage.table(
+        ["window", "left", "drop measured", "$ per 1%", "full window", "spent (calls)", "spent (meter)"], rows,
+        notes={"left": "% of this window left now",
+               "drop measured": "every drop the ledger saw, summed over all past windows of that kind, so it can"
+                                " pass 100%; $ per 1% is measured over it, and - means nothing to measure yet",
+               "$ per 1%": "dollars of calls made while those drops happened, divided by the drop",
+               "full window": "$ per 1% times 100",
+               "spent (calls)": "every recorded call since this window opened, priced",
+               "spent (meter)": "the % this window has lost times $ per 1%; it differs from spent (calls) by what"
+                                " the rate misjudges, or by calls these records do not hold"})))
 
 
 def main():

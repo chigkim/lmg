@@ -45,9 +45,9 @@ def when(epoch):
     return moment.strftime("%I:%M %p on %d %b").lstrip("0")
 
 
-def table(headers, rows, text=(0,)):
+def table(headers, rows, text=(0,), notes=None):
     """A Markdown table as lines, padded to line up in a terminal. The columns numbered in `text` align left;
-    the rest are figures and align right."""
+    the rest are figures and align right. `notes`, {header: what it means}, is listed under the table."""
     cells = [[str(c) for c in headers]] + [[str(c) for c in row] for row in rows]
     widths = [max(len(row[i]) for row in cells) for i in range(len(headers))]
 
@@ -56,7 +56,8 @@ def table(headers, rows, text=(0,)):
                                   for i, (c, w) in enumerate(zip(row, widths))) + " |"
 
     rule = "| " + " | ".join("-" * (w - 1) + ("-" if i in text else ":") for i, w in enumerate(widths)) + " |"
-    return [fit(cells[0]), rule] + [fit(row) for row in cells[1:]]
+    legend = [""] + [f"- {header}: {meaning}" for header, meaning in notes.items()] if notes else []
+    return [fit(cells[0]), rule] + [fit(row) for row in cells[1:]] + legend
 
 
 def span(seconds):

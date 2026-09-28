@@ -148,11 +148,15 @@ def main():
     if "--brief" not in sys.argv:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
-        print("% of each window every task used; an overlapped task shared a plan with another at the time")
+        print("every task in the ledger")
         show(usage.table(
             ["task", "took"] + shown + ["overlapped"],
             [[name, usage.span(minutes * 60)] + [percent(used[w]) if w in used else "-" for w in shown]
-             + ["yes" if shared else ""] for name, minutes, used, shared in done]))
+             + ["yes" if shared else ""] for name, minutes, used, shared in done],
+            notes={"took": "time between the task's before: and after: readings",
+                   ", ".join(shown): "% of that window the task used; - is a reading with no figure for it",
+                   "overlapped": "another task on the same plan ran at the same time, so this one's cost is not"
+                                 " its own and is left out of the typical cost"}))
         print()
 
     costs = {}
@@ -163,22 +167,30 @@ def main():
                                     for w in WINDOWS
                                     if w.startswith(plan) and any(w in u for u in spent)})
     if costs:
-        print("typical cost of one task, over the tasks that ran without overlap")
+        print("what one task of each kind costs")
         show(usage.table(
             ["kind", "plan", "tasks measured", "5h window cost", "week window cost"],
             [[kind, SPENDS[kind], alone] + [percent(c[k]) if k in c else "-" for k in LENGTH]
-             for kind, (alone, c) in costs.items()], text=(0, 1)))
+             for kind, (alone, c) in costs.items()], text=(0, 1),
+            notes={"kind": "the first word of a task's name",
+                   "plan": "the plan this kind spends, from pace.toml",
+                   "tasks measured": "tasks of this kind that ran without overlap",
+                   "5h window cost, week window cost": "typical % of that window one task takes: the mean, less"
+                                                        " the dearest task once there are five"}))
 
     latest = next((row for row in reversed(rows) if any(row[f"{w}_reset"] for w in WINDOWS)),
                   None)
     if latest is None:
         print("\nno reading with reset times yet; run with --fresh")
         return
-    print(f"\nstanding at {latest['time']} ({latest['note']}); negative is behind pace")
+    print(f"\nstanding at {latest['time']} ({latest['note']})")
     stand = standing(latest)
     show(usage.table(
         ["window", "left", "left at even pace", "ahead of pace"],
-        [[window, percent(left), percent(even), percent(spare)] for window, (left, even, spare) in stand.items()]))
+        [[window, percent(left), percent(even), percent(spare)] for window, (left, even, spare) in stand.items()],
+        notes={"left": "% of the window left at that reading",
+               "left at even pace": "% that would be left if the window were spent evenly over its length",
+               "ahead of pace": "left less left at even pace; negative is behind pace"}))
     print()
     fits = []
     for kind, window in PACED.items():
@@ -198,8 +210,13 @@ def main():
             fits.append([kind, window, "0%", f"at least {spare * len(seen)}",
                          f"{every(window, 1 / len(seen))} at most", len(seen)])
     print("how many more tasks fit without falling behind pace")
-    show(usage.table(["kind", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"],
-                     fits, text=(0, 1)))
+    show(usage.table(
+        ["kind", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"], fits, text=(0, 1),
+        notes={"paced on": "the one window pace.toml names for this kind",
+               "cost per task": "mean % of that window one task has used",
+               "fit now": "tasks that can run now before the window falls behind even pace",
+               "then one more every": "how often one more fits after that, as the window's pace catches up",
+               "tasks measured": "tasks the cost per task is the mean of"}))
 
 
 def show(lines):
