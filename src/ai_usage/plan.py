@@ -1,9 +1,9 @@
 """What the Claude, Codex and agy plans were spent on: every call's tokens, who made it, and its public-API dollars.
 
-    uv run --no-sync python ../tools/plan_usage.py                 # the last five hours
-    uv run --no-sync python ../tools/plan_usage.py --hours 24
-    uv run --no-sync python ../tools/plan_usage.py --since "2026-09-27 12:00"
-    uv run --no-sync python ../tools/plan_usage.py --limits        # each 5h and weekly window's size and use, in dollars
+    ai-plan                            # the last five hours
+    ai-plan --hours 24
+    ai-plan --since "2026-09-27 12:00"
+    ai-plan --limits                   # each 5h and weekly window's size and use, in dollars
 
 A plan's limit counts every call made on it, whoever made it, so this reads every record each client leaves:
 
@@ -21,9 +21,9 @@ A plan's limit counts every call made on it, whoever made it, so this reads ever
   time is that of the matching model-response step (step_type 15, one a row, in order).
 
 Models run locally (Qwen under Claude Code, Ollama under Codex) are skipped: they spend no plan.
---limits lines this up with usage-ledger.csv, which ask.sh and usage.py fill: between two rows where a window's figure
+--limits lines this up with the ledger `ai-usage NOTE` fills: between two rows where a window's figure
 fell, the calls made are what that many points cost, and a hundred points are the window. The ledger's whole percents
-make one gap rough and the sum fair. It asks usage.py for what is left now.
+make one gap rough and the sum fair. It asks ai-usage for what is left now.
 """
 import argparse
 import collections
@@ -34,8 +34,10 @@ import pathlib
 import re
 import sqlite3
 
+from ai_usage import usage
+
 HOME = pathlib.Path.home()
-TOOLS = pathlib.Path(__file__).parent
+PRICES = pathlib.Path(__file__).with_name("prices.csv")
 PLANS = ("claude", "codex", "agy")
 # agy stores its model as a number. Each was matched to the one model name found in the conversation files that used only it.
 AGY_MODELS = {1318: "gemini-3.8-flash-high", 1319: "gemini-3.8-flash-medium", 1320: "gemini-3.8-flash-low",
@@ -298,7 +300,7 @@ def agy(since):
 
 
 def prices():
-    with open(TOOLS / "prices.csv", encoding="utf-8") as handle:
+    with open(PRICES, encoding="utf-8") as handle:
         return {row["model"]: {k: float(v) for k, v in row.items() if k not in ("model", "source")} for row in csv.DictReader(handle)}
 
 
@@ -342,7 +344,7 @@ def summed(calls, table):
 
 def report(since, table):
     calls = [c for c in everything(since) if c.time >= since]
-    print(f"since {datetime.datetime.fromtimestamp(since):%Y-%m-%d %H:%M}, at public API rates (tools/prices.csv)")
+    print(f"since {datetime.datetime.fromtimestamp(since):%Y-%m-%d %H:%M}, at public API rates ({PRICES})")
     print(f"{'plan':7}{'source':17}{'calls':>7}{'input':>11}{'cache read':>13}{'cache write':>13}{'output':>11}{'usd':>10}")
     for plan in PLANS:
         mine = [c for c in calls if c.plan == plan]
@@ -389,14 +391,14 @@ def per_point(ledger, calls, plan, kind, table):
 
 def limits(table):
     """Each window in API dollars: the whole of it, and what has gone since it opened."""
-    import sys
-    sys.path.insert(0, str(TOOLS))
-    import usage
     now = usage.windows(usage.asked())
-    with open(TOOLS / "usage-ledger.csv", encoding="utf-8") as handle:
+    if not usage.LEDGER.exists():
+        print(f"no ledger yet at {usage.LEDGER}; `ai-usage NOTE` starts one")
+        return
+    with open(usage.LEDGER, encoding="utf-8") as handle:
         ledger = list(csv.DictReader(handle))
     calls = everything(min(stamp(r["time"]) for r in ledger) - usage.WEEK)
-    print("each plan window at public API rates; a window's size is its dollars a point, measured over usage-ledger.csv, times 100")
+    print("each plan window at public API rates; a window's size is its dollars a point, measured over the ledger, times 100")
     print(f"{'window':12}{'left':>6}{'points':>8}{'$ a point':>11}{'size $':>10}{'used $':>10}{'used $ by %':>13}")
     for plan in PLANS:
         for kind, length in (("5h", usage.FIVE_HOURS), ("week", usage.WEEK)):

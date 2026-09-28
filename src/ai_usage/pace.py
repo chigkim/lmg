@@ -1,13 +1,23 @@
 """The usage calculator: what each task cost, and how many more fit now.
 
-    uv run --no-sync python ../tools/pace.py            # from the ledger's last reading
-    uv run --no-sync python ../tools/pace.py --fresh    # take a reading first
-    uv run --no-sync python ../tools/pace.py --brief    # costs and room, no task table
+    ai-pace            # from the ledger's last reading
+    ai-pace --fresh    # take a reading first
+    ai-pace --brief    # costs and room, no task table
 
-A task is a `before: NAME` row and the next `after: NAME` row in
-usage-ledger.csv. `ask.sh` writes both for a hand-off (NAME is `critic x`,
-`worker x` or `review sha`), and the session writes its own around a task of
-its own with `usage.py "before: session x"` and `usage.py "after: session x"`.
+A task is a `before: NAME` row and the next `after: NAME` row in the ledger,
+written by `ai-usage "before: NAME"` and `ai-usage "after: NAME"` around it.
+The first word of NAME is the task's kind, and `pace.toml` beside the ledger
+names the one window each kind is paced on:
+
+    [paced]
+    session = "claude_5h"    # `before: session x` spends Claude, paced on its 5-hour window
+    critic = "codex_week"
+    worker = "agy_week"
+
+A window is a plan and a length, `claude`, `codex` or `agy` and `5h` or
+`week`, and the plan is what the kind spends. Without the file every task is
+still listed, but no kind is costed or paced.
+
 A task's cost is only what its windows lost between its own two readings --
 never the drift between other rows, since another session may be spending
 the same plans -- and a window that rose instead was reset during the task
@@ -17,9 +27,8 @@ dearest task (`typical`); a task another task here overlapped is marked
 `shared` and left out, since the two cannot be told apart.
 
 Pace is even spending: a window with a quarter of its length left to run is
-on pace with a quarter of it left. The owner's pace for the session is 10% a
-half hour, which is exactly even over a 5-hour window, and the weekly windows
-are what the critic and the worker are paced on (`PACED`). What a window has
+on pace with a quarter of it left, which over a 5-hour window is 10% a half
+hour. What a window has
 beyond its even line is its spare, and the jobs that fit are that spare over
 what one job of that kind costs there. A weekly window reads in whole points
 and one job rarely moves it, so a kind whose jobs have not yet moved it is
@@ -27,23 +36,33 @@ given the bound its count allows: n jobs that cost nought each cost under
 1/n of a point, so at least spare times n more fit.
 """
 import csv
-import pathlib
 import statistics
-import subprocess
 import sys
+import tomllib
 from datetime import datetime
 
-TOOLS = pathlib.Path(__file__).parent
-LEDGER = TOOLS / "usage-ledger.csv"
+from ai_usage import usage
+
 LENGTH = {"5h": 5 * 3600, "week": 7 * 24 * 3600}
-# The plan each kind of task spends.
-SPENDS = {"session": "claude", "critic": "codex", "review": "codex", "worker": "agy"}
-WINDOWS = [f"{plan}_{kind}" for plan in ("claude", "codex", "agy") for kind in LENGTH]
-# The one window each kind is paced on: the session's 5-hour window, and the
-# weekly window of the plan the critic or the worker spends.
-PACED = {"session": "claude_5h", "critic": "codex_week", "review": "codex_week",
-         "worker": "agy_week"}
+WINDOWS = usage.WINDOWS
 RECENT = 10
+
+
+def paced(path=usage.DATA / "pace.toml"):
+    """{kind: window} out of pace.toml, or nothing when there is none."""
+    if not path.exists():
+        return {}
+    with path.open("rb") as handle:
+        kinds = tomllib.load(handle).get("paced", {})
+    for kind, window in kinds.items():
+        if window not in WINDOWS:
+            raise SystemExit(f"{path}: {kind} = {window!r} is not one of {', '.join(WINDOWS)}")
+    return kinds
+
+
+PACED = paced()
+# The plan each kind of task spends: the plan of the window it is paced on.
+SPENDS = {kind: window.split("_")[0] for kind, window in PACED.items()}
 
 
 def moment(text):
@@ -113,13 +132,18 @@ def standing(row):
 
 def main():
     if "--fresh" in sys.argv:
-        subprocess.run([sys.executable, str(TOOLS / "usage.py"), "reading: pace"],
-                       stdout=subprocess.DEVNULL, check=True)
-    with LEDGER.open(encoding="utf-8", newline="") as book:
+        usage.record("reading: pace", usage.asked())
+    if not usage.LEDGER.exists():
+        print(f"no ledger yet at {usage.LEDGER}; run with --fresh, or ai-usage with a note")
+        return
+    with usage.LEDGER.open(encoding="utf-8", newline="") as book:
         rows = list(csv.DictReader(book))
     done = tasks(rows)
+    if not PACED:
+        print(f"no {usage.DATA / 'pace.toml'}, so no kind of task is costed or paced\n")
     if "--brief" not in sys.argv:
-        shown = [w for w in WINDOWS if w != "claude_week"]
+        # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
+        shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
         print(f"{'task':<34}{'min':>5}" + "".join(f"{w:>12}" for w in shown))
         for name, minutes, used, shared in done:
             print(f"{name[:34]:<34}{minutes:>5.0f}"

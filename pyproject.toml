@@ -1,0 +1,19 @@
+[project]
+name = "ai-usage"
+version = "0.1.0"
+description = "How much of the Claude, Codex and agy plan windows is left, what spent it, and how many more tasks fit."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+ai-usage = "ai_usage.usage:main"
+ai-plan = "ai_usage.plan:main"
+ai-pace = "ai_usage.pace:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"

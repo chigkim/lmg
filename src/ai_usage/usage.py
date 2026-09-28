@@ -1,12 +1,18 @@
 """How much of the Claude, Codex and agy plan windows is left.
 
-    uv run --no-sync python ../tools/usage.py
+    ai-usage                      # print it
+    ai-usage "before: some task"  # print it and add a row to the ledger
 
 Codex and agy are read without running a model: `codex app-server` answers
 `account/rateLimits/read`, and `agy models` logs its quota. Claude is read
 from the endpoint its own `/usage` reads, with the CLI's login token held in
 memory for the one request and never printed or stored; a tiny Haiku call is
 the fallback when that token has expired. The three run at once.
+
+The ledger is `usage-ledger.csv` beside this file, so the tool is installed
+editable (`uv tool install -e`) and the ledger stays in the checkout. It is
+shared by every project that spends the same plans, since a plan's limit
+counts all of them.
 """
 
 import csv
@@ -51,7 +57,7 @@ def line(label, used, resets, indent="  "):
     """One window, and how it stands against an even pace -- what would be
     left now if the window were spent evenly -- since a window used up early
     is time out of commission, and a high % left early in it is not room to
-    spare. For a five-hour window that pace is the owner's 10% a half hour.
+    spare. For a five-hour window that pace is 10% a half hour.
     """
     left = max(0, 100 - round(used))
     text = f"{indent}{label:<14}{left:>3}% left (resets {when(resets)})"
@@ -218,7 +224,8 @@ def agy():
     return out or ["  no quota in the agy log"]
 
 
-LEDGER = pathlib.Path(__file__).with_name("usage-ledger.csv")
+DATA = pathlib.Path(__file__).parent
+LEDGER = DATA / "usage-ledger.csv"
 # Each window's percent left and its reset, `YYYY-MM-DD HH:MM`; a blank is
 # a window that gave no reading.
 WINDOWS = [f"{plan}_{kind}" for plan in ("claude", "codex", "agy")
@@ -230,28 +237,32 @@ FIELDS = ["time", "note"] + [f"{window}_{part}" for window in WINDOWS
 def main():
     """Print what is left; with a note, also append a row to the ledger.
 
-        usage.py "before: session mutation sweep"
+        ai-usage "before: session mutation sweep"
 
     A reading just before a task and one just after it is what the task
-    cost, whatever else was spending the same plans in between; `pace.py`
+    cost, whatever else was spending the same plans in between; `ai-pace`
     pairs them.
     """
     note = " ".join(sys.argv[1:])
     report = asked()
     print("\n".join(report))
     if note:
-        row = {"time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-               "note": note}
-        for key, window in windows(report).items():
-            row[f"{key}_left"] = window.left
-            row[f"{key}_reset"] = datetime.fromtimestamp(
-                window.resets).strftime("%Y-%m-%d %H:%M")
-        fresh = not LEDGER.exists()
-        with LEDGER.open("a", encoding="utf-8", newline="") as book:
-            writer = csv.DictWriter(book, FIELDS, lineterminator=chr(10))
-            if fresh:
-                writer.writeheader()
-            writer.writerow(row)
+        record(note, report)
+
+
+def record(note, report):
+    """Append one row to the ledger: the report's readings under a note."""
+    row = {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "note": note}
+    for key, window in windows(report).items():
+        row[f"{key}_left"] = window.left
+        row[f"{key}_reset"] = datetime.fromtimestamp(
+            window.resets).strftime("%Y-%m-%d %H:%M")
+    fresh = not LEDGER.exists()
+    with LEDGER.open("a", encoding="utf-8", newline="") as book:
+        writer = csv.DictWriter(book, FIELDS, lineterminator=chr(10))
+        if fresh:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def asked():

@@ -1,0 +1,7 @@
+# Your own readings and settings, written beside the scripts: not the tool's to share.
+/src/ai_usage/usage-ledger.csv
+/src/ai_usage/pace.toml
+
+__pycache__/
+.venv/
+.pytest_cache/
