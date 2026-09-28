@@ -130,6 +130,11 @@ def standing(row):
     return out
 
 
+def percent(points):
+    """A share of a window, marked as one: 3%, 0.3%."""
+    return f"{points:g}%"
+
+
 def main():
     if "--fresh" in sys.argv:
         usage.record("reading: pace", usage.asked())
@@ -147,7 +152,7 @@ def main():
         print(f"{'task':<34}{'min':>5}" + "".join(f"{w:>12}" for w in shown))
         for name, minutes, used, shared in done:
             print(f"{name[:34]:<34}{minutes:>5.0f}"
-                  + "".join(f"{used.get(w, '-'):>12}" for w in shown)
+                  + "".join(f"{percent(used[w]) if w in used else '-':>12}" for w in shown)
                   + ("  shared" if shared else ""))
         print()
 
@@ -158,7 +163,7 @@ def main():
         costs[kind] = {w: typical([u[w] for u in spent if w in u])
                        for w in WINDOWS
                        if w.startswith(plan) and any(w in u for u in spent)}
-        figures = ", ".join(f"{w} {c:g}" for w, c in costs[kind].items()) or "no paired task yet"
+        figures = ", ".join(f"{w} {percent(c)}" for w, c in costs[kind].items()) or "no paired task yet"
         print(f"cost of a {kind} task ({len(spent)} alone): {figures}")
 
     latest = next((row for row in reversed(rows) if any(row[f"{w}_reset"] for w in WINDOWS)),
@@ -170,7 +175,7 @@ def main():
     stand = standing(latest)
     for window, (left, even, spare) in stand.items():
         print(f"  {window:<12}{left:>4}% left, even pace {even:>3}%, "
-              + (f"{spare} to spare" if spare >= 0 else f"{-spare} over pace"))
+              + (f"{spare}% to spare" if spare >= 0 else f"{-spare}% over pace"))
     print()
     for kind, window in PACED.items():
         seen = [used[window] for name, _, used, shared in done
@@ -180,15 +185,15 @@ def main():
             continue
         spare = max(stand[window][2], 0)
         if not seen:
-            print(f"  {kind:<8} no paired task yet; {window} has {spare} to spare")
+            print(f"  {kind:<8} no paired task yet; {window} has {spare}% to spare")
         elif sum(seen):
             cost = statistics.mean(seen)
             print(f"  {kind:<8} {spare // cost:g} more now, then one every "
-                  f"{every(window, cost)} ({window}, {cost:.2f} a task over {len(seen)})")
+                  f"{every(window, cost)} ({window}, {cost:.2f}% a task over {len(seen)})")
         else:
             print(f"  {kind:<8} at least {spare * len(seen)} more now, then one every "
                   f"{every(window, 1 / len(seen))} at most ({window}, "
-                  f"{len(seen)} tasks moved it nought)")
+                  f"{len(seen)} tasks moved it 0%)")
 
 
 if __name__ == "__main__":

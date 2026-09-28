@@ -342,10 +342,15 @@ def summed(calls, table):
     return len(calls), total[0], total[1], total[2] + total[3], total[4], usd, unpriced
 
 
+def money(usd):
+    """An amount marked as dollars: $2.62, $1,204.50."""
+    return f"${usd:,.2f}"
+
+
 def report(since, table):
     calls = [c for c in everything(since) if c.time >= since]
     print(f"since {datetime.datetime.fromtimestamp(since):%Y-%m-%d %H:%M}, at public API rates ({PRICES})")
-    print(f"{'plan':7}{'source':17}{'calls':>7}{'input':>11}{'cache read':>13}{'cache write':>13}{'output':>11}{'usd':>10}")
+    print(f"{'plan':7}{'source':17}{'calls':>7}{'input':>11}{'cache read':>13}{'cache write':>13}{'output':>11}{'cost':>10}")
     for plan in PLANS:
         mine = [c for c in calls if c.plan == plan]
         groups = collections.defaultdict(list)
@@ -354,7 +359,7 @@ def report(since, table):
         for source, group in sorted(groups.items()) + ([("all", mine)] if len(groups) > 1 else []):
             n, i, r, w, o, usd, unpriced = summed(group, table)
             note = f"  and unpriced: {', '.join(sorted(unpriced))}" if unpriced else ""
-            print(f"{plan:7}{source:17}{n:7}{i:11,}{r:13,}{w:13,}{o:11,}{usd:10.2f}{note}")
+            print(f"{plan:7}{source:17}{n:7}{i:11,}{r:13,}{w:13,}{o:11,}{money(usd):>10}{note}")
 
 
 def stamp(text):
@@ -398,8 +403,8 @@ def limits(table):
     with open(usage.LEDGER, encoding="utf-8") as handle:
         ledger = list(csv.DictReader(handle))
     calls = everything(min(stamp(r["time"]) for r in ledger) - usage.WEEK)
-    print("each plan window at public API rates; a window's size is its dollars a point, measured over the ledger, times 100")
-    print(f"{'window':12}{'left':>6}{'points':>8}{'$ a point':>11}{'size $':>10}{'used $':>10}{'used $ by %':>13}")
+    print("each plan window at public API rates; a window's size is its dollars per 1%, measured over the ledger, times 100")
+    print(f"{'window':12}{'left':>6}{'fallen':>8}{'per 1%':>11}{'size':>10}{'used':>10}{'used by %':>13}")
     for plan in PLANS:
         for kind, length in (("5h", usage.FIVE_HOURS), ("week", usage.WEEK)):
             window = now.get(f"{plan}_{kind}")
@@ -409,12 +414,13 @@ def limits(table):
             opened = window.resets - length
             used = summed([c for c in calls if c.plan == plan and c.time >= opened], table)[5]
             if not points:
-                print(f"{plan + ' ' + kind:12}{window.left:5}%{'':8}{'':11}{'':10}{used:10.2f}  no fall in the ledger to size it by")
+                print(f"{plan + ' ' + kind:12}{window.left:5}%{'':8}{'':11}{'':10}{money(used):>10}  no fall in the ledger to size it by")
                 continue
             rate = usd / points
-            print(f"{plan + ' ' + kind:12}{window.left:5}%{points:8}{rate:11.2f}{rate * 100:10.2f}{used:10.2f}"
-                  f"{rate * (100 - window.left):13.2f}")
-    print("used $ is every call since the window opened; used $ by % is the points gone times $ a point, so the two disagree"
+            print(f"{plan + ' ' + kind:12}{window.left:5}%{points:7}%{money(rate):>11}{money(rate * 100):>10}"
+                  f"{money(used):>10}{money(rate * (100 - window.left)):>13}")
+    print("fallen is the % lost, summed over every window of that kind the ledger saw, so it can pass 100%; used is every call since the window opened; used by % is the %"
+          " gone times the dollars per 1%, so the two disagree"
           " by what the rate misjudges -- or by calls these records do not hold")
 
 

@@ -8,13 +8,13 @@ def test_a_window_spent_evenly_is_on_pace():
     halfway = time.time() + usage.FIVE_HOURS / 2
     window = usage.line("5h limit:", 50, halfway)
     assert (window.left, window.kind) == (50, "5h")
-    assert "even pace 50%, 0 to spare" in window
+    assert "even pace 50%, 0% to spare" in window
 
 
 def test_a_window_spent_early_is_over_pace():
     window = usage.line("Weekly limit:", 60, time.time() + usage.WEEK * 0.9)
     assert window.kind == "week"
-    assert "even pace 90%, 50 over pace" in window
+    assert "even pace 90%, 50% over pace" in window
 
 
 def test_the_ledger_keeps_agy_gemini_group_and_skips_the_others():
