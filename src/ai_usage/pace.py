@@ -148,8 +148,9 @@ def main():
     if "--brief" not in sys.argv:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
+        print("% of each window every task used; an overlapped task shared a plan with another at the time")
         show(usage.table(
-            ["task", "took"] + shown + ["shared"],
+            ["task", "took"] + shown + ["overlapped"],
             [[name, usage.span(minutes * 60)] + [percent(used[w]) if w in used else "-" for w in shown]
              + ["yes" if shared else ""] for name, minutes, used, shared in done]))
         print()
@@ -162,9 +163,9 @@ def main():
                                     for w in WINDOWS
                                     if w.startswith(plan) and any(w in u for u in spent)})
     if costs:
-        print("cost of a task, typical over the tasks that ran alone")
+        print("typical cost of one task, over the tasks that ran without overlap")
         show(usage.table(
-            ["kind", "plan", "alone", "5h", "week"],
+            ["kind", "plan", "tasks measured", "5h window cost", "week window cost"],
             [[kind, SPENDS[kind], alone] + [percent(c[k]) if k in c else "-" for k in LENGTH]
              for kind, (alone, c) in costs.items()], text=(0, 1)))
 
@@ -173,10 +174,10 @@ def main():
     if latest is None:
         print("\nno reading with reset times yet; run with --fresh")
         return
-    print(f"\nstanding at {latest['time']} ({latest['note']}); a negative spare is over pace")
+    print(f"\nstanding at {latest['time']} ({latest['note']}); negative is behind pace")
     stand = standing(latest)
     show(usage.table(
-        ["window", "left", "even pace", "spare"],
+        ["window", "left", "left at even pace", "ahead of pace"],
         [[window, percent(left), percent(even), percent(spare)] for window, (left, even, spare) in stand.items()]))
     print()
     fits = []
@@ -196,8 +197,9 @@ def main():
             # Every task moved it 0%, so over all of them a task costs under 1%.
             fits.append([kind, window, "0%", f"at least {spare * len(seen)}",
                          f"{every(window, 1 / len(seen))} at most", len(seen)])
-    print("how many more fit, each kind paced on one window")
-    show(usage.table(["kind", "window", "a task", "fit now", "then one every", "tasks"], fits, text=(0, 1)))
+    print("how many more tasks fit without falling behind pace")
+    show(usage.table(["kind", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"],
+                     fits, text=(0, 1)))
 
 
 def show(lines):

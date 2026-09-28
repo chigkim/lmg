@@ -361,7 +361,7 @@ def report(since, table):
             note = ", ".join(sorted(unpriced))
             rows.append([plan, source, n, f"{i:,}", f"{r:,}", f"{w:,}", f"{o:,}", money(usd), note])
     print("\n".join(usage.table(
-        ["plan", "source", "calls", "input", "cache read", "cache write", "output", "cost", "unpriced"], rows, text=(0, 1, 8))))
+        ["plan", "source", "calls", "input", "cache read", "cache write", "output", "API cost", "unpriced models"], rows, text=(0, 1, 8))))
 
 
 def stamp(text):
@@ -405,7 +405,7 @@ def limits(table):
     with open(usage.LEDGER, encoding="utf-8") as handle:
         ledger = list(csv.DictReader(handle))
     calls = everything(min(stamp(r["time"]) for r in ledger) - usage.WEEK)
-    print("each plan window at public API rates; a window's size is its dollars per 1%, measured over the ledger, times 100")
+    print("each plan window in dollars at public API rates")
     rows = []
     for plan in PLANS:
         for kind, length in (("5h", usage.FIVE_HOURS), ("week", usage.WEEK)):
@@ -422,11 +422,14 @@ def limits(table):
             rate = usd / points
             rows.append([f"{plan} {kind}", f"{window.left}%", f"{points}%", money(rate), money(rate * 100),
                          money(used), money(rate * (100 - window.left))])
-    print("\n".join(usage.table(["window", "left", "fallen", "per 1%", "size", "used", "used by %"], rows)))
-    print("\nfallen is the % lost, summed over every window of that kind the ledger saw, so it can pass 100%; - is a"
-          " window with no fall to size it by. used is every call since the window opened; used by % is the % gone"
-          " times the dollars per 1%, so the two disagree by what the rate misjudges -- or by calls these records do"
-          " not hold")
+    print("\n".join(usage.table(["window", "left", "drop measured", "$ per 1%", "full window",
+                                 "spent (calls)", "spent (meter)"], rows)))
+    print("\n- drop measured: every drop the ledger saw, summed over all past windows of that kind, so it can pass"
+          " 100%. It is what $ per 1% is measured over, and - means nothing to measure yet."
+          "\n- full window: $ per 1% times 100."
+          "\n- spent (calls): every recorded call since this window opened, priced."
+          "\n- spent (meter): the % this window has lost times $ per 1%. It differs from spent (calls) by what the"
+          " rate misjudges, or by calls these records do not hold.")
 
 
 def main():
