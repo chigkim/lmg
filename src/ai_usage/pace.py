@@ -148,51 +148,60 @@ def main():
     if "--brief" not in sys.argv:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
-        print(f"{'task':<34}{'took':>7}" + "".join(f"{w:>12}" for w in shown))
-        for name, minutes, used, shared in done:
-            print(f"{name[:34]:<34}{usage.span(minutes * 60):>7}"
-                  + "".join(f"{percent(used[w]) if w in used else '-':>12}" for w in shown)
-                  + ("  shared" if shared else ""))
+        show(usage.table(
+            ["task", "took"] + shown + ["shared"],
+            [[name, usage.span(minutes * 60)] + [percent(used[w]) if w in used else "-" for w in shown]
+             + ["yes" if shared else ""] for name, minutes, used, shared in done]))
         print()
 
     costs = {}
     for kind, plan in SPENDS.items():
         spent = [used for name, _, used, shared in done
                  if name.split()[0] == kind and not shared]
-        costs[kind] = {w: typical([u[w] for u in spent if w in u])
-                       for w in WINDOWS
-                       if w.startswith(plan) and any(w in u for u in spent)}
-        figures = ", ".join(f"{w} {percent(c)}" for w, c in costs[kind].items()) or "no paired task yet"
-        print(f"cost of a {kind} task ({len(spent)} alone): {figures}")
+        costs[kind] = (len(spent), {w.split("_")[1]: typical([u[w] for u in spent if w in u])
+                                    for w in WINDOWS
+                                    if w.startswith(plan) and any(w in u for u in spent)})
+    if costs:
+        print("cost of a task, typical over the tasks that ran alone")
+        show(usage.table(
+            ["kind", "plan", "alone", "5h", "week"],
+            [[kind, SPENDS[kind], alone] + [percent(c[k]) if k in c else "-" for k in LENGTH]
+             for kind, (alone, c) in costs.items()], text=(0, 1)))
 
     latest = next((row for row in reversed(rows) if any(row[f"{w}_reset"] for w in WINDOWS)),
                   None)
     if latest is None:
         print("\nno reading with reset times yet; run with --fresh")
         return
-    print(f"\nstanding at {latest['time']} ({latest['note']}):")
+    print(f"\nstanding at {latest['time']} ({latest['note']}); a negative spare is over pace")
     stand = standing(latest)
-    for window, (left, even, spare) in stand.items():
-        print(f"  {window:<12}{left:>4}% left, even pace {even:>3}%, "
-              + (f"{spare}% to spare" if spare >= 0 else f"{-spare}% over pace"))
+    show(usage.table(
+        ["window", "left", "even pace", "spare"],
+        [[window, percent(left), percent(even), percent(spare)] for window, (left, even, spare) in stand.items()]))
     print()
+    fits = []
     for kind, window in PACED.items():
         seen = [used[window] for name, _, used, shared in done
                 if name.split()[0] == kind and not shared and window in used]
         if window not in stand:
-            print(f"  {kind:<8} no reading of {window}")
+            fits.append([kind, window, "-", "no reading", "-", "-"])
             continue
         spare = max(stand[window][2], 0)
         if not seen:
-            print(f"  {kind:<8} no paired task yet; {window} has {spare}% to spare")
+            fits.append([kind, window, "-", "no task yet", "-", 0])
         elif sum(seen):
             cost = statistics.mean(seen)
-            print(f"  {kind:<8} {spare // cost:g} more now, then one every "
-                  f"{every(window, cost)} ({window}, {cost:.2f}% a task over {len(seen)})")
+            fits.append([kind, window, f"{cost:.2f}%", f"{spare // cost:g}", every(window, cost), len(seen)])
         else:
-            print(f"  {kind:<8} at least {spare * len(seen)} more now, then one every "
-                  f"{every(window, 1 / len(seen))} at most ({window}, "
-                  f"{len(seen)} tasks moved it 0%)")
+            # Every task moved it 0%, so over all of them a task costs under 1%.
+            fits.append([kind, window, "0%", f"at least {spare * len(seen)}",
+                         f"{every(window, 1 / len(seen))} at most", len(seen)])
+    print("how many more fit, each kind paced on one window")
+    show(usage.table(["kind", "window", "a task", "fit now", "then one every", "tasks"], fits, text=(0, 1)))
+
+
+def show(lines):
+    print("\n".join(lines))
 
 
 if __name__ == "__main__":

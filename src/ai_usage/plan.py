@@ -350,7 +350,7 @@ def money(usd):
 def report(since, table):
     calls = [c for c in everything(since) if c.time >= since]
     print(f"since {datetime.datetime.fromtimestamp(since):%Y-%m-%d %H:%M}, at public API rates ({PRICES})")
-    print(f"{'plan':7}{'source':17}{'calls':>7}{'input':>11}{'cache read':>13}{'cache write':>13}{'output':>11}{'cost':>10}")
+    rows = []
     for plan in PLANS:
         mine = [c for c in calls if c.plan == plan]
         groups = collections.defaultdict(list)
@@ -358,8 +358,10 @@ def report(since, table):
             groups[call.source].append(call)
         for source, group in sorted(groups.items()) + ([("all", mine)] if len(groups) > 1 else []):
             n, i, r, w, o, usd, unpriced = summed(group, table)
-            note = f"  and unpriced: {', '.join(sorted(unpriced))}" if unpriced else ""
-            print(f"{plan:7}{source:17}{n:7}{i:11,}{r:13,}{w:13,}{o:11,}{money(usd):>10}{note}")
+            note = ", ".join(sorted(unpriced))
+            rows.append([plan, source, n, f"{i:,}", f"{r:,}", f"{w:,}", f"{o:,}", money(usd), note])
+    print("\n".join(usage.table(
+        ["plan", "source", "calls", "input", "cache read", "cache write", "output", "cost", "unpriced"], rows, text=(0, 1, 8))))
 
 
 def stamp(text):
@@ -404,7 +406,7 @@ def limits(table):
         ledger = list(csv.DictReader(handle))
     calls = everything(min(stamp(r["time"]) for r in ledger) - usage.WEEK)
     print("each plan window at public API rates; a window's size is its dollars per 1%, measured over the ledger, times 100")
-    print(f"{'window':12}{'left':>6}{'fallen':>8}{'per 1%':>11}{'size':>10}{'used':>10}{'used by %':>13}")
+    rows = []
     for plan in PLANS:
         for kind, length in (("5h", usage.FIVE_HOURS), ("week", usage.WEEK)):
             window = now.get(f"{plan}_{kind}")
@@ -414,14 +416,17 @@ def limits(table):
             opened = window.resets - length
             used = summed([c for c in calls if c.plan == plan and c.time >= opened], table)[5]
             if not points:
-                print(f"{plan + ' ' + kind:12}{window.left:5}%{'':8}{'':11}{'':10}{money(used):>10}  no fall in the ledger to size it by")
+                # no fall in the ledger to size it by
+                rows.append([f"{plan} {kind}", f"{window.left}%", "0%", "-", "-", money(used), "-"])
                 continue
             rate = usd / points
-            print(f"{plan + ' ' + kind:12}{window.left:5}%{points:7}%{money(rate):>11}{money(rate * 100):>10}"
-                  f"{money(used):>10}{money(rate * (100 - window.left)):>13}")
-    print("fallen is the % lost, summed over every window of that kind the ledger saw, so it can pass 100%; used is every call since the window opened; used by % is the %"
-          " gone times the dollars per 1%, so the two disagree"
-          " by what the rate misjudges -- or by calls these records do not hold")
+            rows.append([f"{plan} {kind}", f"{window.left}%", f"{points}%", money(rate), money(rate * 100),
+                         money(used), money(rate * (100 - window.left))])
+    print("\n".join(usage.table(["window", "left", "fallen", "per 1%", "size", "used", "used by %"], rows)))
+    print("\nfallen is the % lost, summed over every window of that kind the ledger saw, so it can pass 100%; - is a"
+          " window with no fall to size it by. used is every call since the window opened; used by % is the % gone"
+          " times the dollars per 1%, so the two disagree by what the rate misjudges -- or by calls these records do"
+          " not hold")
 
 
 def main():

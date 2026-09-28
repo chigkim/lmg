@@ -19,6 +19,14 @@ def test_a_length_of_time_is_its_two_largest_units():
     assert usage.span(10) == "0m"
 
 
+def test_a_table_is_markdown_padded_to_line_up():
+    assert usage.table(["kind", "cost"], [["critic", "3%"], ["worker", "12.5%"]]) == [
+        "| kind   |  cost |",
+        "| ------ | ----: |",
+        "| critic |    3% |",
+        "| worker | 12.5% |"]
+
+
 def test_a_window_spent_early_is_over_pace():
     window = usage.line("Weekly limit:", 60, time.time() + usage.WEEK * 0.9)
     assert window.kind == "week"
