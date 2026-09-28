@@ -112,8 +112,7 @@ def typical(points):
 def every(window, cost):
     """How often one more task of that cost comes free, as the even line
     falls 100 points over the window's length."""
-    minutes = cost / 100 * LENGTH[window.split("_")[1]] / 60
-    return f"{minutes:.0f} min" if minutes < 90 else f"{minutes / 60:.1f} h"
+    return usage.span(cost / 100 * LENGTH[window.split("_")[1]])
 
 
 def standing(row):
@@ -149,9 +148,9 @@ def main():
     if "--brief" not in sys.argv:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
-        print(f"{'task':<34}{'min':>5}" + "".join(f"{w:>12}" for w in shown))
+        print(f"{'task':<34}{'took':>7}" + "".join(f"{w:>12}" for w in shown))
         for name, minutes, used, shared in done:
-            print(f"{name[:34]:<34}{minutes:>5.0f}"
+            print(f"{name[:34]:<34}{usage.span(minutes * 60):>7}"
                   + "".join(f"{percent(used[w]) if w in used else '-':>12}" for w in shown)
                   + ("  shared" if shared else ""))
         print()

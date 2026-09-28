@@ -45,6 +45,14 @@ def when(epoch):
     return moment.strftime("%I:%M %p on %d %b").lstrip("0")
 
 
+def span(seconds):
+    """A length of time in its two largest units: 40m, 2h 42m, 3d 4h."""
+    minutes = max(round(seconds / 60), 0)
+    days, hours, minutes = minutes // 1440, minutes // 60 % 24, minutes % 60
+    parts = [f"{n}{unit}" for n, unit in ((days, "d"), (hours, "h"), (minutes, "m")) if n]
+    return " ".join(parts[:2]) or "0m"
+
+
 WEEK = 7 * 24 * 3600
 FIVE_HOURS = 5 * 3600
 
@@ -60,7 +68,7 @@ def line(label, used, resets, indent="  "):
     spare. For a five-hour window that pace is 10% a half hour.
     """
     left = max(0, 100 - round(used))
-    text = f"{indent}{label:<14}{left:>3}% left (resets {when(resets)})"
+    text = f"{indent}{label:<14}{left:>3}% left (resets {when(resets)}, in {span(resets - time.time())})"
     length = WEEK if label.startswith("Weekly") else FIVE_HOURS
     even = round(100 * min(max(resets - time.time(), 0), length) / length)
     margin = left - even
