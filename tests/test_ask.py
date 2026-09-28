@@ -1,10 +1,11 @@
 import csv
 import json
 import subprocess
+import threading
 
 import pytest
 
-from askai import ask
+from askai import ask, usage
 
 
 def test_a_job_is_named_after_its_prompt_file():
@@ -80,7 +81,7 @@ def test_claude_cache_writes_kept_an_hour_are_counted_apart():
 def test_a_run_stopped_part_way_still_gives_its_id():
     claude = stream({"type": "system", "subtype": "init", "session_id": "s1"}, {"type": "assistant"})
     said, sid, spent, trouble = ask.read_claude(claude)
-    assert (said, sid, spent) == ("", "s1", ask.counts()) and trouble.startswith("ended early")
+    assert (said, sid, spent) == ("", "s1", None) and trouble.startswith("ended early")
     agy = stream({"event": "init", "conversation_id": "c1", "init": {}}, {"event": "step_update"})
     assert ask.read_agy(agy)[1] == "c1" and ask.read_agy(agy)[3].startswith("ended early")
 
@@ -160,7 +161,7 @@ def test_a_job_runs_in_its_own_worktree_and_leaves_its_answer_in_runs(repo, tmp_
     tree = tmp_path / "worktrees" / "claude-look"
     assert (status, note, seen["cwd"]) == (0, "claude look", tree)
     assert (tree / "TASK.md").read_text() == "look around" and not prompt.exists()
-    assert (tmp_path / "runs" / "claude" / "look-task-1.md").read_text() == "look around"
+    assert (tmp_path / "runs" / "claude" / "look-1.task.md").read_text() == "look around"
     assert (tmp_path / "runs" / "claude" / "look-1.md").read_text(encoding="utf-8") == "the answer"
     (tree / "new.txt").write_text("x")
     [row] = ask.jobs(repo, tmp_path)
@@ -179,8 +180,8 @@ def test_a_dot_in_a_job_s_name_is_not_a_suffix(repo, tmp_path, monkeypatch):
         prompt.write_text("bump")
         ask.job("claude", "read", prompt, None, repo, tmp_path, "m", "3600s")
     runs = tmp_path / "runs" / "claude"
-    assert {p.name for p in runs.glob("*.md")} == {"bump-3.11-1.md", "bump-3.11-task-1.md", "bump-3.12-1.md",
-                                                   "bump-3.12-task-1.md"}
+    assert {p.name for p in runs.glob("*.md")} == {"bump-3.11-1.md", "bump-3.11-1.task.md", "bump-3.12-1.md",
+                                                   "bump-3.12-1.task.md"}
 
 
 def test_a_fresh_job_is_not_handed_an_earlier_job_s_worktree(repo, tmp_path, monkeypatch):
@@ -245,3 +246,86 @@ def test_usage_plan_and_pace_are_forms_of_the_one_command(monkeypatch):
     assert ask.main(["pace", "--brief"]) == 0
     assert seen == [["--brief"]]
     assert set(ask.READERS) == {"usage", "plan", "pace"}
+
+
+def test_clean_keeps_an_ignored_file_the_job_made_but_not_a_copy_the_checkout_has(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    (repo / ".gitignore").write_text(".venv/\nresults.db\n")
+    git("add", ".", cwd=repo)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ignore", cwd=repo)
+    (repo / ".venv").mkdir()
+    (tmp_path / "work-prompt.md").write_text("work")
+    ask.job("claude", "edit", tmp_path / "work-prompt.md", None, repo, tmp_path, "m", "3600s")
+    tree = tmp_path / "worktrees" / "claude-work"
+    (tree / ".venv").mkdir()
+    (tree / ".venv" / "f").write_text("rebuilt at will")
+    (tree / "results.db").write_text("the job's work")
+    with pytest.raises(ask.Problem, match=r"1 ignored files the job made \(results.db\)"):
+        ask.clean("claude", "work", repo, tmp_path)
+    (tree / "results.db").unlink()
+    ask.clean("claude", "work", repo, tmp_path)
+    assert not tree.exists()
+
+
+def test_a_task_copy_is_never_another_job_s_answer(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    for name in ("foo", "foo-task"):
+        (tmp_path / f"{name}-prompt.md").write_text(f"the {name} task")
+        ask.job("claude", "read", tmp_path / f"{name}-prompt.md", None, repo, tmp_path, "m", "3600s")
+    runs = tmp_path / "runs" / "claude"
+    assert (runs / "foo-1.task.md").read_text() == "the foo task"
+    assert (runs / "foo-task-1.task.md").read_text() == "the foo-task task"
+
+
+def test_an_agy_run_stopped_before_its_total_books_nothing_and_is_no_baseline(tmp_path):
+    stopped = stream({"event": "init", "conversation_id": "c1"})
+    said, sid, spent, trouble = ask.read_agy(stopped, agy_result(conversation_id="c1", usage={"input_tokens": 100}))
+    assert (sid, spent) == ("c1", None) and trouble.startswith("ended early")
+    (tmp_path / "x-1.jsonl").write_text(agy_result(conversation_id="c1", usage={"input_tokens": 100}))
+    (tmp_path / "x-2.jsonl").write_text(stopped)
+    assert "100" in ask.last_of("agy", tmp_path, "x", 3, "c1")
+
+
+def test_two_ledgers_made_at_once_have_one_header(tmp_path):
+    path = tmp_path / "ledger.csv"
+    threads = [threading.Thread(target=usage.append, args=(path, ["time", "note"], {"time": "t", "note": str(n)}))
+               for n in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    lines = path.read_text().splitlines()
+    assert lines.count("time,note") == 1 and len(lines) == 9
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_clean_refuses_a_branch_with_commits_not_in_head(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    (tmp_path / "work-prompt.md").write_text("work")
+    ask.job("claude", "edit", tmp_path / "work-prompt.md", None, repo, tmp_path, "m", "3600s")
+    tree = tmp_path / "worktrees" / "claude-work"
+    (tree / "b.txt").write_text("b")
+    git("add", "b.txt", cwd=tree)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b", cwd=tree)
+    with pytest.raises(ask.Problem, match="1 commits not in"):
+        ask.clean("claude", "work", repo, tmp_path)
+    assert tree.exists()
+
+
+def test_an_agy_answer_quoting_the_timeout_notice_is_not_a_timeout():
+    text = agy_result(conversation_id="c1", response='it checks for "print timeout after" in the output',
+                      usage={"input_tokens": 1})
+    assert ask.read_agy(text)[3] == ""
+    assert ask.read_agy(text + "print timeout after 3600s\n")[3].startswith("timed out")
+
+
+def test_a_job_refused_its_worktree_takes_no_reading(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    (tmp_path / "look-prompt.md").write_text("look")
+    ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+    readings = []
+    monkeypatch.setattr(ask, "reading", lambda stage, note: readings.append(stage) or [])
+    (tmp_path / "look-prompt.md").write_text("look again")
+    with pytest.raises(ask.Problem, match="earlier job"):
+        ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+    assert readings == []

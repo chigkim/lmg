@@ -50,12 +50,12 @@ A repository's home is `PARENT/.askai/REPO`, a folder beside it, so repositories
 A job is named after its prompt file, less `.md` and a trailing `-prompt`: `fix-ledger-prompt.md` is the job `fix-ledger`.
 
 1. `askai` makes `HOME/worktrees/HARNESS-NAME`, a worktree on a branch of that name at `HEAD`, or reuses it for a follow-up. A new job whose worktree is still there from an earlier one is refused, rather than handed that job's changes.
-2. It moves the prompt in as `TASK.md` and keeps a numbered copy as `HOME/runs/HARNESS/NAME-task-N.md`.
+2. It moves the prompt in as `TASK.md` and keeps a numbered copy as `HOME/runs/HARNESS/NAME-N.task.md`.
 3. It takes a reading as `before: HARNESS NAME`, runs the harness in the worktree told only to read `TASK.md`, and takes the `after:` reading.
 4. The harness's last message is the answer, `HOME/runs/HARNESS/NAME-N.md`, beside its raw output, `NAME-N.jsonl`. The session id to follow up with is printed. The raw output is streamed as the job runs, so a job stopped part way still has its id, and `askai list` shows it.
 5. One row goes to `src/askai/token-ledger.csv`: time, job, repository, model, uncached input, cache reads, cache writes, output, and the public-API cost.
 
-Edit work is left as an uncommitted diff in the worktree for you to review, test and merge. `askai clean HARNESS NAME` removes the worktree and its branch, and refuses while it holds uncommitted files (`TASK.md` aside) or commits that `HEAD` has not got, unless given `--force`.
+Edit work is left as an uncommitted diff in the worktree for you to review, test and merge. `askai clean HARNESS NAME` removes the worktree and its branch, and refuses while it holds uncommitted files (`TASK.md` aside), commits that `HEAD` has not got, or gitignored files the job made, unless given `--force`. Git deletes a worktree's ignored files with it, so an ignored file is left out of the count only where the main checkout has the same path, a `.venv` or a `__pycache__`: a local copy of something rebuilt at will.
 
 A follow-up is a new prompt file of the same name plus the id: `askai codex edit fix-ledger-prompt.md <id>`. It runs in the same worktree and may change mode. The agent is told that `TASK.md` now holds a new task, because a session told only to read it again answered the old one from memory. An agy follow-up books only its own tokens: agy's count runs over the whole conversation, so the last earlier run of the same conversation is taken off it.
 
@@ -75,7 +75,7 @@ A new worktree holds what git tracks and nothing else: no `.venv`, no `node_modu
 
 ### Stopping a job
 
-Every process `askai` starts dies with it, however it is stopped. On Windows it puts itself in a job object that kills its members when it exits; elsewhere the harness runs in its own process group, which is killed on the way out.
+On Windows every process `askai` starts dies with it, however it is stopped: it puts itself in a job object that kills its members when it exits. Elsewhere the harness runs in its own process group, which is killed when the harness ends and when `askai` exits on a signal it can catch; a `kill -9` of `askai` leaves the group running. A plan reading that runs past its timeout has its whole process tree killed, since on Windows an npm-installed CLI is a `.cmd` shim whose real process is a grandchild.
 
 ## Measuring a task
 

@@ -25,7 +25,7 @@ A repository's home is PARENT/.askai/REPO, beside it, unless `homes.toml` beside
 
 The job is named after the prompt file, less `.md` and a trailing `-prompt`. Its worktree is
 HOME/worktrees/HARNESS-NAME, on a branch of that name at HEAD, made on first use and reused by a follow-up. The
-prompt is moved in as TASK.md, with a numbered copy kept as HOME/runs/HARNESS/NAME-task-N.md, and the agent is
+prompt is moved in as TASK.md, with a numbered copy kept as HOME/runs/HARNESS/NAME-N.task.md, and the agent is
 told only to read TASK.md there. The harness's final message is the answer, HOME/runs/HARNESS/NAME-N.md, beside
 its raw output; the id to follow up with is printed. The raw output is streamed, so a run stopped part way still
 holds the id, and `list` finds it there. A follow-up is a new prompt file of the same name, plus that
@@ -37,7 +37,6 @@ cache reads, cache writes and output, which add up to what the model read and wr
 the public API at the rates in `prices.csv`. All three sit beside this file.
 """
 import argparse
-import csv
 import json
 import os
 import pathlib
@@ -202,9 +201,10 @@ def read_claude(text):
     trouble = "" if out else "ended early: no result, so no answer; follow up with the id"
     if out.get("is_error"):
         trouble = f"failed: {out.get('subtype', 'error')}"
+    # A run stopped before its result reports no usage, which is not a run that used none.
     return out.get("result") or "", session("claude", text), counts(
         spent.get("input_tokens", 0), spent.get("cache_read_input_tokens", 0),
-        spent.get("cache_creation_input_tokens", 0), hour, spent.get("output_tokens", 0)), trouble
+        spent.get("cache_creation_input_tokens", 0), hour, spent.get("output_tokens", 0)) if out else None, trouble
 
 
 def read_agy(text, before=""):
@@ -218,15 +218,16 @@ def read_agy(text, before=""):
         return now.get(key, 0) - was.get(key, 0)
     trouble = ""
     # agy says SUCCESS and exits 0 when --print-timeout cuts a turn off.
-    if "print timeout after" in text:
+    if any("print timeout after" in line for line in text.splitlines() if not line.lstrip().startswith("{")):
         trouble = "timed out: the answer and the worktree are partial; follow up with the id"
     elif out.get("denied_actions"):
         denied = ", ".join(d.get("display_name") or d.get("action", "?") for d in out["denied_actions"])
         trouble = f"denied {denied}: read mode refused it and the run ended there"
     elif not out:
         trouble = "ended early: no result, so no answer; follow up with the id"
+    # A run stopped before its result has no total, and less the last one it would book a negative count.
     return out.get("response") or "", session("agy", text), counts(
-        spent("input_tokens"), spent("cache_read_tokens"), 0, 0, spent("output_tokens")), trouble
+        spent("input_tokens"), spent("cache_read_tokens"), 0, 0, spent("output_tokens")) if now else None, trouble
 
 
 def cost(model, spent, table):
@@ -244,20 +245,17 @@ def book(note, repo, model, spent, path=None):
     """One row of the token ledger, TOKENS unless PATH; returns the line that says it."""
     path = path or TOKENS
     usd = cost(model, spent, plan.prices())
-    fresh = not path.exists()
-    with path.open("a", encoding="utf-8", newline="") as ledger:
-        writer = csv.DictWriter(ledger, TOKEN_FIELDS, lineterminator=chr(10))
-        if fresh:
-            writer.writeheader()
-        writer.writerow({"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "note": note, "repo": repo,
-                         "model": model, **spent, "usd": "" if usd is None else f"{usd:.2f}"})
+    usage.append(path, TOKEN_FIELDS, {"time": datetime.now().strftime(usage.STAMP), "note": note, "repo": repo,
+                                      "model": model, **spent, "usd": "" if usd is None else f"{usd:.2f}"})
     price = f"${usd:.2f}" if usd is not None else f"unknown ({model} has no price in {plan.PRICES})"
     return (f"tokens: input {spent['input']}, cache read {spent['cache_read']}, cache write {spent['cache_write']},"
             f" output {spent['output']}; API equivalent {price}")
 
 
 def git(*args, cwd):
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    # Git for Windows prints paths in UTF-8, which the ANSI code page would mangle.
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
 
 
 def toplevel(folder):
@@ -274,24 +272,35 @@ def common(folder):
 
 
 def worktree(repo, tree, resume):
-    """Make TREE a worktree of REPO at HEAD, or, for a follow-up, check that the one there already is. A fresh job
-    is refused a worktree left by an earlier one, which would hand it that job's changes as its own."""
+    """Whether TREE is still to be made, having checked it: a follow-up needs the worktree there already, and a
+    fresh job is refused one left by an earlier job, which would hand it that job's changes as its own."""
     if tree.exists():
         if common(tree) != common(repo):
             raise Problem(f"{tree} is there but is not a worktree of {repo}")
         if not resume:
             raise Problem(f"{tree} is left from an earlier job: follow it up with its id (`askai list`), or clean it")
-        return
+        return False
     if resume:
         raise Problem(f"no worktree {tree} to follow up in")
+    return True
+
+
+def make(repo, tree):
+    """Make TREE a worktree of REPO at HEAD, on a branch of its name."""
     made = git("worktree", "add", "-q", str(tree), "-b", tree.name, "HEAD", cwd=repo)
     if made.returncode:
         raise Problem(made.stderr.strip() or f"could not make {tree}")
 
 
+def task_copy(runs, name, n):
+    """Where run N of job NAME keeps its prompt. NAME-N.task.md, not NAME-task-N.md, which a job named NAME-task
+    would write its answer over: an answer ends in its run number and this in .task, so no name makes them meet."""
+    return runs / f"{name}-{n}.task.md"
+
+
 def numbered(folder, name):
     n = 1
-    while (folder / f"{name}-task-{n}.md").exists():
+    while task_copy(folder, name, n).exists():
         n += 1
     return n
 
@@ -354,9 +363,13 @@ def run(argv, cwd, out, err=None):
         try:
             return child.wait()
         finally:
-            if child.poll() is None and os.name != "nt":
+            # Whether or not the harness is still running: what it left in the background is in its group too.
+            if os.name != "nt":
                 import signal
-                os.killpg(child.pid, signal.SIGKILL)
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             if errs:
                 errs.close()
 
@@ -369,12 +382,18 @@ def installed(harness):
         raise Problem(str(missing))
 
 
+def totalled(harness, text):
+    """Whether a codex or agy stream ends with its session's running total, which a run stopped part way has not."""
+    return (codex_usage(text)[1] if harness == "codex" else final(harness, text).get("usage")) is not None
+
+
 def last_of(harness, runs, name, n, resume):
-    """The stream of the latest run before N of the session RESUME, or '' if none is kept."""
+    """The stream of the latest run before N of the session RESUME that has a usage total, or '' if none is kept.
+    A run stopped before its total is passed over, so its tokens are booked by the next run that has one."""
     for earlier in range(n - 1, 0, -1):
         path = runs / f"{name}-{earlier}.jsonl"
         text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-        if text and session(harness, text) == resume:
+        if text and session(harness, text) == resume and totalled(harness, text):
             return text
     return ""
 
@@ -387,15 +406,19 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
     name = job_name(prompt)
     tree = home / "worktrees" / f"{harness}-{name}"
     runs = home / "runs" / harness
-    worktree(repo, tree, resume)
+    note = f"{harness} {name}" + (" (resumed)" if resume else "")
+    fresh = worktree(repo, tree, resume)
+    # After the checks, which may refuse the job, and before anything is made or moved, so a reading that fails
+    # (a ledger open in Excel) leaves no job half made.
+    reading("before", note)
+    if fresh:
+        make(repo, tree)
     runs.mkdir(parents=True, exist_ok=True)
     n = numbered(runs, name)
-    (runs / f"{name}-task-{n}.md").write_bytes(prompt.read_bytes())
+    task_copy(runs, name, n).write_bytes(prompt.read_bytes())
     shutil.move(prompt, tree / "TASK.md")  # os.replace cannot cross drives
     # Each path is named whole: with_suffix would take a dot in the job's name for the start of a suffix.
     answer, raw, log = (runs / f"{name}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
-    note = f"{harness} {name}" + (" (resumed)" if resume else "")
-    reading("before", note)
     print(f"{harness} {mode}, {model}, in {tree}", flush=True)
     argv = command(harness, mode, model, tree, answer, resume, timeout)
     lines = []
@@ -433,7 +456,10 @@ def review(sha, repo, home, model):
     sha = found.stdout.strip()[:12]
     runs = home / "runs" / "codex"
     runs.mkdir(parents=True, exist_ok=True)
-    answer, raw, log = (runs / f"review-{sha}.{kind}" for kind in ("md", "jsonl", "log"))
+    n = 1
+    while (runs / f"review-{sha}-{n}.md").exists():
+        n += 1
+    answer, raw, log = (runs / f"review-{sha}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
     note = f"review {sha}"
     reading("before", note)
     started = time.time()
@@ -474,6 +500,14 @@ def changes(tree):
             if line[3:] != "TASK.md"]
 
 
+def made(tree, repo):
+    """What git ignores in TREE that REPO's own checkout has no path for, so the job made it: a results file, a
+    config it wrote. `git worktree remove` deletes ignored files, with or without its --force (measured). A path the
+    checkout has too, a .venv or a __pycache__, is a local copy of something rebuilt at will, and is left out."""
+    entries = git("status", "--porcelain", "--ignored", cwd=tree).stdout.splitlines()
+    return [line[3:] for line in entries if line.startswith("!! ") and not (repo / line[3:].rstrip("/")).exists()]
+
+
 def clean(harness, name, repo, home, force=False):
     """Remove a job's worktree and branch; unless FORCE, not while it holds work that would be lost with them."""
     tree = home / "worktrees" / f"{harness}-{name}"
@@ -483,8 +517,10 @@ def clean(harness, name, repo, home, force=False):
         raise Problem(f"{tree} is not a worktree of {repo}")
     if not force:
         unmerged = git("rev-list", "--count", "HEAD.." + tree.name, cwd=repo).stdout.strip()
-        if changes(tree) or unmerged not in ("", "0"):
-            raise Problem(f"{tree} has {len(changes(tree))} uncommitted files and {unmerged or 0} commits not in"
+        changed, new = changes(tree), made(tree, repo)
+        if changed or new or unmerged not in ("", "0"):
+            raise Problem(f"{tree} has {len(changed)} uncommitted files, {len(new)} ignored files the job made"
+                          f"{' (' + ', '.join(new) + ')' if new else ''} and {unmerged or 0} commits not in"
                           f" {repo.name}'s HEAD: merge what is worth keeping, or clean with --force")
     for step in (("worktree", "remove", "--force", str(tree)), ("branch", "-D", "-q", tree.name)):
         done = git(*step, cwd=repo)

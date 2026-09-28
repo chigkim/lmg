@@ -385,7 +385,8 @@ def report(since, table):
 
 
 def stamp(text):
-    return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M").timestamp()
+    """A ledger time: to the second, or to the minute in a row written before seconds were."""
+    return datetime.datetime.fromisoformat(text).timestamp()
 
 
 def per_point(ledger, calls, plan, kind, table):

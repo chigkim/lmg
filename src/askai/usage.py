@@ -15,8 +15,11 @@ shared by every project that spends the same plans, since a plan's limit
 counts all of them.
 """
 
+import contextlib
 import csv
+import io
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -30,6 +33,27 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 PROMPT = "Reply with the word ok and nothing else."
+
+
+def kill(child):
+    """Kill CHILD and everything under it. On Windows the CLI is often an npm .cmd shim, so the real process is a
+    grandchild that would keep the pipes open after the shim alone was killed."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(child.pid)], capture_output=True)
+    child.kill()
+
+
+def ran(argv, timeout, cwd):
+    """(exit status, stdout) of ARGV, its whole tree killed if it runs past TIMEOUT seconds."""
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             text=True, encoding="utf-8", errors="replace", cwd=cwd)
+    try:
+        out, _ = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill(child)
+        child.communicate()
+        raise RuntimeError(f"{pathlib.Path(argv[0]).stem} gave no answer in {timeout}s")
+    return child.returncode, out
 
 
 def cli(name):
@@ -142,13 +166,12 @@ def unstarted(label, resets):
 
 
 def _claude_by_call():
-    run = subprocess.run(
+    status, out = ran(
         [cli("claude"), "-p", PROMPT, "--model", "claude-haiku-4-5-20251001",
          "--output-format", "stream-json", "--verbose", "--max-turns", "1"],
-        capture_output=True, text=True, encoding="utf-8", timeout=180,
-        cwd=pathlib.Path.home())
+        180, pathlib.Path.home())
     windows = {}
-    for raw in run.stdout.splitlines():
+    for raw in out.splitlines():
         if '"rate_limit_event"' not in raw:
             continue
         info = json.loads(raw)["rate_limit_info"]
@@ -156,11 +179,13 @@ def _claude_by_call():
             windows[name] = window
     if not windows:
         return ["  no rate_limit_event in the reply "
-                f"(exit {run.returncode})"]
+                f"(exit {status})"]
     names = {"five_hour": "5h limit:", "seven_day": "Weekly limit:"}
-    return [line(names.get(name, name + ":"), window["utilization"] * 100,
-                 unstarted(names.get(name, name), window.get("resetsAt")))
-            for name, window in windows.items()]
+    # Only the windows it names: another's label, having no `limit:`, would be read as a group header and
+    # take the windows after it out of the ledger.
+    return [line(names[name], window["utilization"] * 100,
+                 unstarted(names[name], window.get("resetsAt")))
+            for name, window in windows.items() if name in names]
 
 
 def codex():
@@ -172,7 +197,7 @@ def codex():
         encoding="utf-8", cwd=pathlib.Path.home())
     # A server that never answers would hold every reading for ever; killed,
     # its output closes and `answer` says it closed without answering.
-    guard = threading.Timer(30, server.kill)
+    guard = threading.Timer(30, kill, [server])
     guard.start()
     try:
         def send(message):
@@ -195,7 +220,7 @@ def codex():
         reply = answer(2)
     finally:
         guard.cancel()
-        server.kill()
+        kill(server)
     if "error" in reply:
         return [f"  codex refused: {reply['error'].get('message')}"]
     limits = reply["result"]["rateLimits"]
@@ -225,10 +250,8 @@ def agy():
         folder = pathlib.Path(tempfile.mkdtemp())
         log = folder / "agy.log"
         try:
-            subprocess.run([cli("agy"), "-v=3", "--log-file", str(log),
-                            "models"],
-                           capture_output=True, text=True, encoding="utf-8",
-                           timeout=120, cwd=pathlib.Path.home())
+            ran([cli("agy"), "-v=3", "--log-file", str(log), "models"],
+                120, pathlib.Path.home())
             text = (log.read_text(encoding="utf-8", errors="replace")
                     if log.exists() else "")
         finally:
@@ -273,6 +296,8 @@ def agy():
 
 DATA = pathlib.Path(__file__).parent
 LEDGER = DATA / "usage-ledger.csv"
+# A ledger row's time. To the second, so a reading just before a task and one just after it never share a time.
+STAMP = "%Y-%m-%d %H:%M:%S"
 # Each window's percent left and its reset, `YYYY-MM-DD HH:MM`; a blank is
 # a window that gave no reading.
 WINDOWS = [f"{plan}_{kind}" for plan in ("claude", "codex", "agy")
@@ -299,17 +324,55 @@ def main(argv=None):
 
 def record(note, report):
     """Append one row to the ledger: the report's readings under a note."""
-    row = {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "note": note}
+    row = {"time": datetime.now().strftime(STAMP), "note": note}
     for key, window in windows(report).items():
         row[f"{key}_left"] = window.left
         row[f"{key}_reset"] = datetime.fromtimestamp(
             window.resets).strftime("%Y-%m-%d %H:%M")
-    fresh = not LEDGER.exists()
-    with LEDGER.open("a", encoding="utf-8", newline="") as book:
-        writer = csv.DictWriter(book, FIELDS, lineterminator=chr(10))
-        if fresh:
+    append(LEDGER, FIELDS, row)
+
+
+def append(path, fields, row):
+    """One row onto the CSV at PATH, made with its header if it is empty, under a lock on the file.
+
+    Without the lock two processes could each find the file empty and write a header, and on Windows, where an
+    append seeks to the end and then writes, one could write its row over the other's (measured)."""
+    text = io.StringIO()
+    writer = csv.DictWriter(text, fields, lineterminator=chr(10))
+    with path.open("ab") as book, locked(book):
+        if book.seek(0, os.SEEK_END) == 0:
             writer.writeheader()
         writer.writerow(row)
+        book.write(text.getvalue().encode("utf-8"))
+
+
+@contextlib.contextmanager
+def locked(handle):
+    """Hold an exclusive lock on the open file HANDLE, waiting for another process to let go of it."""
+    if os.name == "nt":
+        import msvcrt
+        # Byte 0 stands for the file; locking it past the end is allowed, so an empty file can be locked too.
+        handle.seek(0)
+        while True:
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            handle.flush()
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def asked():

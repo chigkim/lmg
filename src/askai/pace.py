@@ -66,7 +66,14 @@ SPENDS = {kind: window.split("_")[0] for kind, window in PACED.items()}
 
 
 def moment(text):
-    return datetime.strptime(text, "%Y-%m-%d %H:%M")
+    """A ledger time: to the second, or to the minute in a row written before seconds were."""
+    return datetime.fromisoformat(text)
+
+
+def whole(ratio):
+    """How many whole tasks a ratio of room to cost is. Floor division of floats undercounts at the boundary:
+    1 // 0.1 is 9.0, because 0.1 is a little over a tenth; the ratio, rounded off first, is not."""
+    return int(round(ratio, 9))
 
 
 def tasks(rows):
@@ -99,8 +106,13 @@ def same_window(before, after, window):
     return not (was and now) or abs((moment(now) - moment(was)).total_seconds()) <= 600
 
 
+def kind_of(name):
+    """A task's kind, the first word of its name; '' for a task named nothing."""
+    return (name.split() or [""])[0]
+
+
 def plan(name):
-    return SPENDS.get(name.split()[0])
+    return SPENDS.get(kind_of(name))
 
 
 def typical(points):
@@ -170,7 +182,7 @@ def main(argv=None):
     costs = {}
     for kind, plan in SPENDS.items():
         spent = [used for name, _, used, shared in done
-                 if name.split()[0] == kind and not shared]
+                 if kind_of(name) == kind and not shared]
         costs[kind] = (len(spent), {w.split("_")[1]: typical([u[w] for u in spent if w in u])
                                     for w in WINDOWS
                                     if w.startswith(plan) and any(w in u for u in spent)})
@@ -203,7 +215,7 @@ def main(argv=None):
     fits = []
     for kind, window in PACED.items():
         seen = [used[window] for name, _, used, shared in done
-                if name.split()[0] == kind and not shared and window in used]
+                if kind_of(name) == kind and not shared and window in used]
         if window not in stand:
             fits.append([kind, window, "-", "no reading", "-", "-"])
             continue
@@ -213,7 +225,7 @@ def main(argv=None):
         elif typical(seen):
             # The same typical cost the table above gives, the dearest task left out.
             cost = typical(seen)
-            fits.append([kind, window, f"{cost:.2f}%", f"{spare // cost:g}", every(window, cost), len(seen)])
+            fits.append([kind, window, f"{cost:.2f}%", f"{whole(spare / cost)}", every(window, cost), len(seen)])
         else:
             # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
             # fallen in a window of its own, so the one bound they give is 1% a task.

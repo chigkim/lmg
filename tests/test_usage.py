@@ -1,4 +1,5 @@
 import csv
+import json
 import time
 
 from askai import usage
@@ -69,10 +70,22 @@ def test_an_agy_limit_logged_without_a_fraction_is_used_up(monkeypatch):
            '"displayName": "Weekly Limit Remaining"', '"resetTime": "2099-01-02T00:00:00Z"',
            '"remainingFraction": 0.25', '"displayName": "Gemini Models"']
 
-    def agy(argv, **kwargs):
+    def agy(argv, timeout, cwd):
         open(argv[argv.index("--log-file") + 1], "w", encoding="utf-8").write(chr(10).join(log))
+        return 0, ""
     monkeypatch.setattr(usage, "cli", lambda name: name)
-    monkeypatch.setattr(usage.subprocess, "run", agy)
+    monkeypatch.setattr(usage, "ran", agy)
     group, five, week = usage.agy()
     assert group.strip() == "Gemini Models"
     assert (five.left, week.left) == (0, 25)
+
+
+def test_a_claude_window_this_does_not_name_is_left_out_not_read_as_a_group(monkeypatch):
+    event = {"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {
+        "seven_day_opus": {"utilization": 0.5, "resetsAt": 4102444800},
+        "five_hour": {"utilization": 0.2, "resetsAt": 4102444800},
+        "seven_day": {"utilization": 0.1, "resetsAt": 4102444800}}}}
+    monkeypatch.setattr(usage, "cli", lambda name: name)
+    monkeypatch.setattr(usage, "ran", lambda argv, timeout, cwd: (0, json.dumps(event)))
+    lines = usage._claude_by_call()
+    assert [line.split(":")[0].strip() for line in lines] == ["5h limit", "Weekly limit"]

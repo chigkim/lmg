@@ -57,3 +57,18 @@ def test_a_reset_during_a_task_is_no_cost():
     before["codex_5h_reset"], after["codex_5h_reset"] = "2026-09-27 10:15", "2026-09-27 15:15"
     [(_, _, used, _)] = pace.tasks([before, after])
     assert used == {}
+
+
+def test_whole_tasks_are_not_undercounted_at_the_boundary():
+    assert (1 // 0.1, pace.whole(1 / 0.1), pace.whole(0.3 / 0.1), pace.whole(0.29 / 0.1)) == (9.0, 10, 3, 2)
+
+
+def test_a_ledger_time_is_read_to_the_second_or_to_the_minute():
+    assert pace.moment("2026-09-28 09:59:30").second == 30
+    assert pace.moment("2026-09-28 09:59").minute == 59
+
+
+def test_a_task_named_nothing_has_no_kind_and_does_not_stop_pace():
+    rows = [row("2026-09-27 10:00", "before: ", codex_week=80), row("2026-09-27 10:30", "after: ", codex_week=79)]
+    [(name, _, _, _)] = pace.tasks(rows)
+    assert (pace.kind_of(name), pace.plan(name)) == ("", None)
