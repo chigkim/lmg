@@ -55,18 +55,25 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 
 ## Request log
 
-`config.toml` (read from the working directory, or `--config PATH`) turns it on:
+`config.toml` (read from the working directory, or `--config PATH`) sets it up:
 
 ```toml
 [log]
-file = "log.jsonl"   # relative to config.toml; comment out to log nothing
+file = "log.jsonl"   # relative to config.toml; leave out to log nothing
+level = "debug"
 ```
 
-Each request is one JSON line: `time`, `api` (`responses` or `chat`), `model`, `stream`, `seconds`, `input` (the last message the client sent, as it sent it: a user message or a tool result), `output` (the Responses output items, or the Chat Completions assistant message with any tool calls), `usage`, and `error` when a request was refused or failed. Image data URLs are cut to their type and size. The key is never in it, but prompts and replies are, in full.
+Each level holds everything below it:
 
-## Debugging
+| Level | What each line holds |
+| --- | --- |
+| `off` | Nothing is written. |
+| `error` | A refused or failed request: `api`, `model`, `stream`, `seconds`, `usage` and the `error`. |
+| `info` | Every request, with the same fields. The default when `level` is left out. |
+| `debug` | Also `input`, the last message the client sent (a user message or a tool result), and `output`, the reply: the Responses output items, or the Chat Completions assistant message with any tool calls. |
+| `trace` | Also one line for every whole request body (`kind` `responses` or `chat`) and every event the model sent (`kind` `event`). |
 
-`GATEWAY_DUMP=path.jsonl` appends every request and every event to that file. It holds every prompt and image a client sent, so delete it when done; `*.jsonl` is gitignored.
+A request's line has `kind` `request`. Image data URLs are cut to their type and size at every level. The key is never logged, but from `debug` up prompts and replies are, in full; `*.jsonl` is gitignored. The level is read at startup, so a change needs a restart.
 
 ## Smoke test
 

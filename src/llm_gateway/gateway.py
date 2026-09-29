@@ -53,8 +53,13 @@ CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 # Fields the Codex backend accepts; it refuses others (temperature, max_output_tokens, ...).
 CODEX_FIELDS = {"model", "instructions", "input", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "text",
                 "include", "prompt_cache_key"}
-DUMP = os.environ.get("GATEWAY_DUMP")  # a file name to append every request and event to
-LOG = None                             # config.toml's [log] file: one line a request, set by main
+# How much config.toml's [log] file gets, each level holding everything below it:
+#   error  a request that was refused or failed, and why
+#   info   every request: model, timing, usage
+#   debug  and its last input message and its reply
+#   trace  and the whole request body and every event the model sent
+LEVELS = ("off", "error", "info", "debug", "trace")
+LOG, LEVEL = None, 0                   # the log file and its level's index in LEVELS, set by main
 
 
 class Refused(Exception):
@@ -69,10 +74,16 @@ def log(*parts):
     print(time.strftime("%H:%M:%S"), *parts, file=sys.stderr, flush=True)
 
 
-def dump(kind, obj):
-    if DUMP:
-        with open(DUMP, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"t": time.time(), "kind": kind, "obj": obj}) + "\n")
+def logged(line):
+    line = dict(time=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **line)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(shrunk(line), ensure_ascii=False) + "\n")
+
+
+def trace(kind, obj):
+    """At trace, one line for a request body or an event, as it came."""
+    if LOG and LEVEL >= LEVELS.index("trace"):
+        logged({"kind": kind, "body": obj})
 
 
 def shrunk(obj):
@@ -94,25 +105,29 @@ def last_input(body, api):
 
 
 def record(api, body, started, output=None, usage=None, error=None):
-    """One line in the [log] file: the last message in, the reply out. Nothing when no log is configured."""
-    if not LOG:
+    """One line for a finished request, holding as much as the level asks for."""
+    if not LOG or LEVEL < LEVELS.index("info" if error is None else "error"):
         return
-    line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "api": api, "model": body.get("model"),
-            "stream": bool(body.get("stream")), "seconds": round(time.monotonic() - started, 2),
-            "input": shrunk(last_input(body, api)), "output": shrunk(output), "usage": usage}
+    line = {"kind": "request", "api": api, "model": body.get("model"), "stream": bool(body.get("stream")),
+            "seconds": round(time.monotonic() - started, 2), "usage": usage}
     if error:
         line["error"] = error
-    with open(LOG, "a", encoding="utf-8") as f:
-        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    if LEVEL >= LEVELS.index("debug"):
+        line.update(input=last_input(body, api), output=output)
+    logged(line)
 
 
 def configured(path):
-    """The log file config.toml names, resolved beside it; None for no config or no [log] file."""
+    """config.toml's [log] file, resolved beside it, and its level; (None, 0) for no config or no file."""
     path = pathlib.Path(path)
     if not path.exists():
-        return None
-    name = tomllib.loads(path.read_text(encoding="utf-8")).get("log", {}).get("file")
-    return str(path.parent / name) if name else None
+        return None, 0
+    section = tomllib.loads(path.read_text(encoding="utf-8")).get("log", {})
+    level = section.get("level", "info")
+    if level not in LEVELS:
+        sys.exit(f"{path}: [log] level is {level!r}; use one of {', '.join(LEVELS)}")
+    name = section.get("file")
+    return (str(path.parent / name), LEVELS.index(level)) if name and level != "off" else (None, 0)
 
 
 def new_id(prefix):
@@ -716,7 +731,7 @@ async def sse(request):
 async def responses(request):
     started = time.monotonic()
     body = await request.json()
-    dump("responses", body)
+    trace("responses", body)
     log(f"POST /v1/responses {body.get('model')} stream={bool(body.get('stream'))}")
     try:
         events = backend(body)
@@ -730,7 +745,7 @@ async def responses(request):
         if body.get("stream"):
             reply = await sse(request)
         async for e in _chain(head, events):
-            dump("event", e)
+            trace("event", e)
             if e.get("type") == "response.output_item.done":
                 done.append(e["item"])
             if e.get("type", "").startswith("response.") and "response" in e:
@@ -765,7 +780,7 @@ async def responses(request):
 async def chat(request):
     started = time.monotonic()
     body = await request.json()
-    dump("chat", body)
+    trace("chat", body)
     log(f"POST /v1/chat/completions {body.get('model')} stream={bool(body.get('stream'))}")
     writer = ChatWriter(body.get("model"))
     try:
@@ -781,6 +796,7 @@ async def chat(request):
             reply = await sse(request)
             await reply.write(f"data: {json.dumps(writer.chunk({'role': 'assistant', 'content': ''}))}\n\n".encode())
         async for e in _chain(head, events):
+            trace("event", e)
             for c in writer.take(e):
                 if reply:
                     await reply.write(f"data: {json.dumps(c)}\n\n".encode())
@@ -847,8 +863,8 @@ def main():
     parser.add_argument("--port", type=int, default=8797)
     parser.add_argument("--config", default="config.toml", help="settings file (default: config.toml)")
     args = parser.parse_args()
-    global LOG
-    LOG = configured(args.config)
+    global LOG, LEVEL
+    LOG, LEVEL = configured(args.config)
     key = api_key()
     if not key:
         sys.exit("no GATEWAY_API_KEY: put one in .env (see .env.example) or the environment")
@@ -863,7 +879,7 @@ def main():
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
     log(f"claude: {CLAUDE or 'the SDK default'}")
-    log(f"log: {LOG or 'off'}")
+    log(f"log: {f'{LOG} at {LEVELS[LEVEL]}' if LOG else 'off'}")
     log(f"listening on http://127.0.0.1:{args.port}/v1")
     web.run_app(app, host="127.0.0.1", port=args.port, print=None)
 
