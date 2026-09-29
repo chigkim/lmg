@@ -37,6 +37,7 @@ import shutil
 import sys
 import tempfile
 import time
+import tomllib
 import uuid
 
 import aiohttp
@@ -53,6 +54,7 @@ CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_FIELDS = {"model", "instructions", "input", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "text",
                 "include", "prompt_cache_key"}
 DUMP = os.environ.get("GATEWAY_DUMP")  # a file name to append every request and event to
+LOG = None                             # config.toml's [log] file: one line a request, set by main
 
 
 class Refused(Exception):
@@ -71,6 +73,46 @@ def dump(kind, obj):
     if DUMP:
         with open(DUMP, "a", encoding="utf-8") as f:
             f.write(json.dumps({"t": time.time(), "kind": kind, "obj": obj}) + "\n")
+
+
+def shrunk(obj):
+    """obj with every data URL cut to its type and size, so an image does not fill the log."""
+    if isinstance(obj, dict):
+        return {k: shrunk(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [shrunk(v) for v in obj]
+    if isinstance(obj, str) and obj.startswith("data:") and "," in obj:
+        head, data = obj.split(",", 1)
+        return f"{head},<{len(data)} chars>"
+    return obj
+
+
+def last_input(body, api):
+    """The request's last input message, as the client sent it."""
+    items = body.get("messages") if api == "chat" else body.get("input")
+    return items[-1] if isinstance(items, list) and items else items
+
+
+def record(api, body, started, output=None, usage=None, error=None):
+    """One line in the [log] file: the last message in, the reply out. Nothing when no log is configured."""
+    if not LOG:
+        return
+    line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "api": api, "model": body.get("model"),
+            "stream": bool(body.get("stream")), "seconds": round(time.monotonic() - started, 2),
+            "input": shrunk(last_input(body, api)), "output": shrunk(output), "usage": usage}
+    if error:
+        line["error"] = error
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def configured(path):
+    """The log file config.toml names, resolved beside it; None for no config or no [log] file."""
+    path = pathlib.Path(path)
+    if not path.exists():
+        return None
+    name = tomllib.loads(path.read_text(encoding="utf-8")).get("log", {}).get("file")
+    return str(path.parent / name) if name else None
 
 
 def new_id(prefix):
@@ -681,8 +723,9 @@ async def responses(request):
         head = await first(events)
     except Refused as e:
         log(f"  refused {e.status}: {e}")
+        record("responses", body, started, error=f"{e.status}: {e}")
         return refusal(e.status, str(e))
-    reply, n, last, done = None, 0, None, []
+    reply, n, last, done, failure = None, 0, None, [], None
     try:
         if body.get("stream"):
             reply = await sse(request)
@@ -701,12 +744,16 @@ async def responses(request):
                 await reply.write(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode())
     except Refused as e:
         log(f"  failed mid-reply: {e}")
+        failure = f"{e.status}: {e}"
         if not reply:
+            record("responses", body, started, output=done, error=failure)
             return refusal(e.status, str(e))
         failed = {"type": "response.failed", "sequence_number": n,
                   "response": {"status": "failed", "error": {"code": "gateway_error", "message": str(e)}}}
         await reply.write(f"event: response.failed\ndata: {json.dumps(failed)}\n\n".encode())
     log(f"  {time.monotonic() - started:.1f}s, usage {(last or {}).get('usage')}")
+    record("responses", body, started, output=(last or {}).get("output") or done,
+           usage=(last or {}).get("usage"), error=failure)
     if reply:
         await reply.write_eof()
         return reply
@@ -726,8 +773,9 @@ async def chat(request):
         head = await first(events)
     except Refused as e:
         log(f"  refused {e.status}: {e}")
+        record("chat", body, started, error=f"{e.status}: {e}")
         return refusal(e.status, str(e))
-    stream, reply = bool(body.get("stream")), None
+    stream, reply, failure = bool(body.get("stream")), None, None
     try:
         if stream:
             reply = await sse(request)
@@ -738,10 +786,13 @@ async def chat(request):
                     await reply.write(f"data: {json.dumps(c)}\n\n".encode())
     except Refused as e:
         log(f"  failed mid-reply: {e}")
+        failure = f"{e.status}: {e}"
         if not reply:
+            record("chat", body, started, output=writer.whole()["choices"][0]["message"], error=failure)
             return refusal(e.status, str(e))
         await reply.write(f"data: {json.dumps({'error': {'message': str(e)}})}\n\n".encode())
     log(f"  {time.monotonic() - started:.1f}s, usage {writer.usage}")
+    record("chat", body, started, output=writer.whole()["choices"][0]["message"], usage=writer.usage, error=failure)
     if not reply:
         return web.json_response(writer.whole())
     if (body.get("stream_options") or {}).get("include_usage"):
@@ -794,7 +845,10 @@ WORKDIR = str(pathlib.Path(tempfile.gettempdir()) / "llm-gateway")
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--port", type=int, default=8797)
+    parser.add_argument("--config", default="config.toml", help="settings file (default: config.toml)")
     args = parser.parse_args()
+    global LOG
+    LOG = configured(args.config)
     key = api_key()
     if not key:
         sys.exit("no GATEWAY_API_KEY: put one in .env (see .env.example) or the environment")
@@ -809,6 +863,7 @@ def main():
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
     log(f"claude: {CLAUDE or 'the SDK default'}")
+    log(f"log: {LOG or 'off'}")
     log(f"listening on http://127.0.0.1:{args.port}/v1")
     web.run_app(app, host="127.0.0.1", port=args.port, print=None)
 

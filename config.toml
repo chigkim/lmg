@@ -1,0 +1,6 @@
+# llm-gateway settings. Read from the working directory, or wherever --config points.
+
+[log]
+# One JSON line a request: the last input message, the reply, usage and timing.
+# Relative to this file. Comment it out to log nothing.
+file = "log.jsonl"

@@ -53,6 +53,17 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 - A conversation with no live Claude session (after a restart, or a client that edited its history) is replayed to a fresh session as a transcript.
 - Claude's thinking is not passed back. The Codex backend drops fields it does not accept, such as `temperature`.
 
+## Request log
+
+`config.toml` (read from the working directory, or `--config PATH`) turns it on:
+
+```toml
+[log]
+file = "log.jsonl"   # relative to config.toml; comment out to log nothing
+```
+
+Each request is one JSON line: `time`, `api` (`responses` or `chat`), `model`, `stream`, `seconds`, `input` (the last message the client sent, as it sent it: a user message or a tool result), `output` (the Responses output items, or the Chat Completions assistant message with any tool calls), `usage`, and `error` when a request was refused or failed. Image data URLs are cut to their type and size. The key is never in it, but prompts and replies are, in full.
+
 ## Debugging
 
 `GATEWAY_DUMP=path.jsonl` appends every request and every event to that file. It holds every prompt and image a client sent, so delete it when done; `*.jsonl` is gitignored.
