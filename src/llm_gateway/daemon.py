@@ -6,8 +6,9 @@
     llm-gateway restart      stop, then start
     llm-gateway status       whether it is running, its pid and its log
 
-A daemon is known by its port: its pid and console output are in ~/.llm-gateway/PORT.pid and PORT.log, so `stop`
-and `status` work from any folder. It runs in the folder `start` was run from, and reads config.toml and .env there.
+A daemon is known by its port: its pid and console output are in logs/PORT.pid and logs/PORT.log in this project,
+found from this file rather than the working directory, so `stop` and `status` work from any folder. It runs in the
+folder `start` was run from, and reads config.toml and .env there.
 """
 import argparse
 import os
@@ -18,7 +19,7 @@ import subprocess
 import sys
 import time
 
-STATE = pathlib.Path.home() / ".llm-gateway"
+STATE = pathlib.Path(__file__).resolve().parents[2] / "logs"   # src/llm_gateway/daemon.py -> the project
 READY = 30                   # seconds `start` waits for the port to answer
 WINDOWS = sys.platform == "win32"
 
@@ -96,7 +97,7 @@ def start(args):
     if listening(args.port):
         print(f"port {args.port} is already in use by something this command did not start")
         return 1
-    STATE.mkdir(exist_ok=True)
+    STATE.mkdir(parents=True, exist_ok=True)
     config = str(pathlib.Path(args.config).resolve())
     argv = [sys.executable, "-m", "llm_gateway", "run", "--port", str(args.port), "--config", config]
     with open(log_file(args.port), "a", encoding="utf-8") as out:

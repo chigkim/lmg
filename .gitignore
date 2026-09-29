@@ -14,3 +14,6 @@ wheels/
 
 # Secrets
 .env
+
+# Daemon pid files and console logs
+logs/

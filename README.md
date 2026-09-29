@@ -15,7 +15,7 @@ uv run llm-gateway            # or in this console, until Ctrl-C (same as `run`)
 
 Every command takes `--port N` (default 8797) and `--config PATH` (default `config.toml`). `uv tool install -e .` puts `llm-gateway` on the PATH, so it runs without `uv run`; it still reads `config.toml` and `.env` from the folder you run `start` in.
 
-The daemon is known by its port. Its pid and console output are in `~/.llm-gateway/PORT.pid` and `PORT.log`, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
+The daemon is known by its port. Its pid and console output are in `logs/PORT.pid` and `logs/PORT.log` in this project, found from the script's own location, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
 
 Point any OpenAI-compatible client at `http://127.0.0.1:8797/v1`, with `GATEWAY_API_KEY` as its API key. It serves `/v1/responses`, `/v1/chat/completions` and `/v1/models`.
 
