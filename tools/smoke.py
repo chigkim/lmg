@@ -1,19 +1,24 @@
 # /// script
-# dependencies = ["openai>=1.100"]
+# dependencies = ["openai>=1.100", "python-dotenv>=1.0"]
 # ///
 """Drive gateway.py with the openai client: a tool round trip, a follow-up, streaming, and an image, on both APIs.
 
     uv run tools/smoke.py MODEL [IMAGE]
+
+The key is GATEWAY_API_KEY, from the environment or .env, as the gateway reads it.
 """
 import base64
 import json
+import os
 import sys
 
+from dotenv import dotenv_values, find_dotenv
 from openai import OpenAI
 
 MODEL = sys.argv[1]
 IMAGE = sys.argv[2] if len(sys.argv) > 2 else None
-api = OpenAI(base_url="http://127.0.0.1:8797/v1", api_key="unused")
+KEY = os.environ.get("GATEWAY_API_KEY") or dotenv_values(find_dotenv(usecwd=True)).get("GATEWAY_API_KEY")
+api = OpenAI(base_url="http://127.0.0.1:8797/v1", api_key=KEY)
 WEATHER = {"name": "get_weather", "description": "The weather in a city, right now.",
            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}
 

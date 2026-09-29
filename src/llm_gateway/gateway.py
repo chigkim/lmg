@@ -17,6 +17,10 @@ a tool call ends the HTTP response with a function_call, the handler waits, and 
 function_call_output for that call id hands the output to it and lets Claude carry on. A conversation the gateway has
 no live session for (a restart, a client that edited its history) is replayed to a fresh session as a transcript.
 
+Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment or from a .env
+file found from the working directory upward. The gateway will not start without one: a keyless gateway would let any
+process on the machine, or a web page in its browser, spend both plans.
+
 Credentials: the Codex token is read from auth.json on every request and never refreshed, written, logged or printed.
 Codex rotates its refresh token, so a second refresher could log Codex out; when the token expires, run any `codex`
 command and retry. Claude's login is never touched at all: the SDK's `claude` child uses its own.
@@ -25,6 +29,7 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import os
 import pathlib
@@ -36,6 +41,7 @@ import uuid
 
 import aiohttp
 from aiohttp import web
+from dotenv import dotenv_values, find_dotenv
 from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, SdkMcpTool, StreamEvent,
                               create_sdk_mcp_server)
 
@@ -639,6 +645,26 @@ def refusal(status, message):
     return web.json_response({"error": error}, status=status)
 
 
+def api_key():
+    """GATEWAY_API_KEY from the environment, else from .env; None when neither has one."""
+    key = os.environ.get("GATEWAY_API_KEY") or dotenv_values(find_dotenv(usecwd=True)).get("GATEWAY_API_KEY")
+    return key.strip() if key and key.strip() else None
+
+
+def keyed(key):
+    """Middleware refusing any request without `Authorization: Bearer KEY`. The key is never logged."""
+    wanted = f"Bearer {key}".encode()
+
+    @web.middleware
+    async def check(request, handler):
+        given = request.headers.get("Authorization", "").encode()
+        if not hmac.compare_digest(given, wanted):
+            log(f"{request.method} {request.path} refused 401: no valid API key")
+            return refusal(401, "a valid API key is required: Authorization: Bearer GATEWAY_API_KEY")
+        return await handler(request)
+    return check
+
+
 async def sse(request):
     reply = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
     await reply.prepare(request)
@@ -769,12 +795,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--port", type=int, default=8797)
     args = parser.parse_args()
+    key = api_key()
+    if not key:
+        sys.exit("no GATEWAY_API_KEY: put one in .env (see .env.example) or the environment")
     os.makedirs(WORKDIR, exist_ok=True)
     # The Claude side is the subscription or nothing: a key or a base URL in the environment would reroute the child.
     for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
         if os.environ.pop(name, None) is not None:
             log(f"ignoring {name} from the environment")
-    app = web.Application(client_max_size=64 * 1024 * 1024)
+    app = web.Application(client_max_size=64 * 1024 * 1024, middlewares=[keyed(key)])
     app.add_routes([web.post("/v1/responses", responses), web.post("/v1/chat/completions", chat),
                     web.get("/v1/models", models)])
     app.on_startup.append(startup)
