@@ -25,7 +25,6 @@ Credentials: the Codex token is read from auth.json on every request and never r
 Codex rotates its refresh token, so a second refresher could log Codex out; when the token expires, run any `codex`
 command and retry. Claude's login is never touched at all: the SDK's `claude` child uses its own.
 """
-import argparse
 import asyncio
 import base64
 import hashlib
@@ -867,13 +866,10 @@ SESSIONS, HTTP, CLAUDE = set(), None, claude_exe()
 WORKDIR = str(pathlib.Path(tempfile.gettempdir()) / "llm-gateway")
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--port", type=int, default=8797)
-    parser.add_argument("--config", default="config.toml", help="settings file (default: config.toml)")
-    args = parser.parse_args()
+def serve(port, config):
+    """Serve on 127.0.0.1:port until stopped, with the settings in the config file."""
     global LOG, LEVEL
-    LOG, LEVEL = configured(args.config)
+    LOG, LEVEL = configured(config)
     key = api_key()
     os.makedirs(WORKDIR, exist_ok=True)
     # The Claude side is the subscription or nothing: a key or a base URL in the environment would reroute the child.
@@ -887,9 +883,5 @@ def main():
     app.on_cleanup.append(cleanup)
     log(f"claude: {CLAUDE or 'the SDK default'}")
     log(f"log: {f'{LOG} at {LEVELS[LEVEL]}' if LOG else 'off'}")
-    log(f"listening on http://127.0.0.1:{args.port}/v1")
-    web.run_app(app, host="127.0.0.1", port=args.port, print=None)
-
-
-if __name__ == "__main__":
-    main()
+    log(f"listening on http://127.0.0.1:{port}/v1")
+    web.run_app(app, host="127.0.0.1", port=port, print=None)

@@ -6,9 +6,16 @@ A small LLM gateway on loopback. It speaks OpenAI's Responses and Chat Completio
 
 ```bash
 uv sync
-uv run llm-gateway            # listens on http://127.0.0.1:8797/v1
-uv run llm-gateway --port 9000
+uv run llm-gateway start      # in the background, on http://127.0.0.1:8797/v1
+uv run llm-gateway status
+uv run llm-gateway restart    # after changing config.toml
+uv run llm-gateway stop
+uv run llm-gateway            # or in this console, until Ctrl-C (same as `run`)
 ```
+
+Every command takes `--port N` (default 8797) and `--config PATH` (default `config.toml`). `uv tool install -e .` puts `llm-gateway` on the PATH, so it runs without `uv run`; it still reads `config.toml` and `.env` from the folder you run `start` in.
+
+The daemon is known by its port. Its pid and console output are in `~/.llm-gateway/PORT.pid` and `PORT.log`, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
 
 Point any OpenAI-compatible client at `http://127.0.0.1:8797/v1`, with `GATEWAY_API_KEY` as its API key. It serves `/v1/responses`, `/v1/chat/completions` and `/v1/models`.
 
