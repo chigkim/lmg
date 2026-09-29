@@ -127,7 +127,11 @@ def configured(path):
     if level not in LEVELS:
         sys.exit(f"{path}: [log] level is {level!r}; use one of {', '.join(LEVELS)}")
     name = section.get("file")
-    return (str(path.parent / name), LEVELS.index(level)) if name and level != "off" else (None, 0)
+    if not name or level == "off":
+        return None, 0
+    file = path.parent / name
+    file.parent.mkdir(parents=True, exist_ok=True)
+    return str(file), LEVELS.index(level)
 
 
 def new_id(prefix):

@@ -2,7 +2,7 @@
 
 [log]
 # The file, relative to this one. Leave it out to log nothing.
-file = "log.jsonl"
+file = "logs/log.jsonl"
 # How much it gets. Each level holds everything below it:
 #   off    nothing
 #   error  a request that was refused or failed, and why

@@ -63,7 +63,7 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 
 ```toml
 [log]
-file = "log.jsonl"   # relative to config.toml; leave out to log nothing
+file = "logs/log.jsonl"   # relative to config.toml; leave out to log nothing
 level = "debug"
 ```
 
