@@ -18,8 +18,8 @@ function_call_output for that call id hands the output to it and lets Claude car
 no live session for (a restart, a client that edited its history) is replayed to a fresh session as a transcript.
 
 Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment or from a .env
-file found from the working directory upward. The gateway will not start without one: a keyless gateway would let any
-process on the machine, or a web page in its browser, spend both plans.
+file found from the working directory upward. With neither, it writes a new random key to .env in the working directory
+and uses that: a keyless gateway would let any process on the machine, or a web page in its browser, spend both plans.
 
 Credentials: the Codex token is read from auth.json on every request and never refreshed, written, logged or printed.
 Codex rotates its refresh token, so a second refresher could log Codex out; when the token expires, run any `codex`
@@ -33,6 +33,7 @@ import hmac
 import json
 import os
 import pathlib
+import secrets
 import shutil
 import sys
 import tempfile
@@ -703,9 +704,17 @@ def refusal(status, message):
 
 
 def api_key():
-    """GATEWAY_API_KEY from the environment, else from .env; None when neither has one."""
+    """GATEWAY_API_KEY from the environment, else from .env; with neither, a new one written to ./.env."""
     key = os.environ.get("GATEWAY_API_KEY") or dotenv_values(find_dotenv(usecwd=True)).get("GATEWAY_API_KEY")
-    return key.strip() if key and key.strip() else None
+    if key and key.strip():
+        return key.strip()
+    key, path = secrets.token_urlsafe(32), pathlib.Path(".env").resolve()
+    lead = "\n" if path.exists() and not path.read_bytes().endswith(b"\n") and path.stat().st_size else ""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:
+        f.write(f"{lead}GATEWAY_API_KEY={key}\n")
+    log(f"no GATEWAY_API_KEY: generated one in {path}")
+    return key
 
 
 def keyed(key):
@@ -866,8 +875,6 @@ def main():
     global LOG, LEVEL
     LOG, LEVEL = configured(args.config)
     key = api_key()
-    if not key:
-        sys.exit("no GATEWAY_API_KEY: put one in .env (see .env.example) or the environment")
     os.makedirs(WORKDIR, exist_ok=True)
     # The Claude side is the subscription or nothing: a key or a base URL in the environment would reroute the child.
     for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
