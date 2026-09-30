@@ -1,11 +1,12 @@
 import csv
 import json
 import subprocess
+import sys
 import threading
 
 import pytest
 
-from llm_gateway import ask, cli, usage
+from llm_gateway import ask, cli, daemon, pace, plan, usage
 
 
 def test_a_job_is_named_after_its_prompt_file():
@@ -240,24 +241,29 @@ def test_claude_read_mode_is_the_three_tools_and_nothing_else():
                                            "--permission-mode", "dontAsk", "--strict-mcp-config"]
 
 
-def test_plan_and_pace_are_forms_of_lmg_usage(monkeypatch):
-    seen = []
-    monkeypatch.setitem(cli.READERS, "pace", lambda argv: seen.append(argv) or 0)
-    assert cli.main(["usage", "pace", "--brief"]) == 0
-    assert seen == [["--brief"]]
-    assert set(cli.READERS) == {"plan", "pace"}
-
-
 def test_lmg_hands_each_group_the_rest_of_the_line(monkeypatch):
     seen = []
-    monkeypatch.setattr(cli.daemon, "main", lambda argv: seen.append(("proxy", argv)) or 0)
-    monkeypatch.setattr(cli.ask, "main", lambda argv, command_line: seen.append(("ask", argv, command_line)) or 0)
-    monkeypatch.setattr(cli.usage, "main", lambda argv: seen.append(("usage", argv)) or 0)
+    monkeypatch.setattr(daemon, "main", lambda argv: seen.append(("proxy", argv)) or 0)
+    monkeypatch.setattr(ask, "main", lambda argv, command_line: seen.append(("ask", argv, command_line)) or 0)
+    monkeypatch.setattr(usage, "main", lambda argv: seen.append(("usage", argv)) or 0)
+    monkeypatch.setattr(plan, "main", lambda argv: seen.append(("plan", argv)) or 0)
+    monkeypatch.setattr(pace, "main", lambda argv: seen.append(("pace", argv)) or 0)
     assert cli.main(["proxy", "status", "--port", "9"]) == 0
     assert cli.main(["ask", "list"]) == 0
     assert cli.main(["usage", "before: session x"]) == 0
-    assert seen == [("proxy", ["status", "--port", "9"]), ("ask", ["list"], False), ("usage", ["before: session x"])]
+    assert cli.main(["usage", "plan", "--hours", "1"]) == 0
+    assert cli.main(["usage", "pace", "--brief"]) == 0
+    assert seen == [("proxy", ["status", "--port", "9"]), ("ask", ["list"], False), ("usage", ["before: session x"]),
+                    ("plan", ["--hours", "1"]), ("pace", ["--brief"])]
     assert cli.main(["askai"]) == 2
+
+
+def test_the_proxy_never_reads_pace_toml():
+    # pace.py exits on a bad pace.toml when imported, so the gateway must start and stop without it.
+    code = ("import sys; from llm_gateway import cli; cli.main(['proxy', 'status', '--port', '1']); "
+            "print(sorted(m for m in sys.modules if m.startswith('llm_gateway.')))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    assert "llm_gateway.daemon" in out and "llm_gateway.pace" not in out and "llm_gateway.ask" not in out
     assert cli.main([]) == 2
 
 

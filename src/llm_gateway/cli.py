@@ -10,25 +10,29 @@ Each form's own options follow its words; `lmg proxy --help` and `lmg ask --help
 """
 import sys
 
-from . import ask, daemon, pace, plan, usage
-
-# The two forms of `lmg usage` that are not a reading, each its own module's main.
-READERS = {"plan": plan.main, "pace": pace.main}
-
 
 def main(argv=None):
+    # Each group imports only its own modules: pace.py reads your pace.toml on import and exits on a bad one,
+    # which is no reason for the gateway not to start or stop.
     command_line, argv = argv is None, sys.argv[1:] if argv is None else argv
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0 if argv else 2
     group, rest = argv[0], argv[1:]
     if group == "proxy":
+        from . import daemon
         return daemon.main(rest)
     if group == "ask":
+        from . import ask
         return ask.main(rest, command_line=command_line)
     if group == "usage":
-        if rest and rest[0] in READERS:
-            return READERS[rest[0]](rest[1:])
+        if rest and rest[0] == "plan":
+            from . import plan
+            return plan.main(rest[1:])
+        if rest and rest[0] == "pace":
+            from . import pace
+            return pace.main(rest[1:])
+        from . import usage
         return usage.main(rest)
     print(f"unknown {group}: proxy, ask or usage", file=sys.stderr)
     return 2
