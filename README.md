@@ -8,7 +8,7 @@ One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed
 | `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
 | `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), what one task of its harness costs it on average, how many more tasks that leaves, and when each resets. With a note, `word: what` such as `"before: pi x"`, it also adds a row to the ledger, which keeps agy's Gemini group only. Any other word is refused, so a mistyped form writes nothing. `lmg usage --help` lists every form, and each form takes `--help` too. |
 | `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it (`claude code`, `claude -p` and `pi bridge` for Claude; `codex` and `codex exec` for Codex), with tokens and what they would cost on the public API. |
-| `lmg usage tasks` | What a task costs each window, how many tasks that is measured from, and every task in the ledger with what it took from each window. A cost from fewer than five tasks is marked rough. |
+| `lmg usage tasks` | Every task in the ledger with what it took from each window, then what a task costs each window and how many tasks that is measured from. A cost from fewer than five tasks is marked rough. |
 | `lmg usage worth` | What each window is worth in dollars, sized from the ledger and the clients' records, and how much of it is spent. It takes no options but `--help`, and it is slower than the rest (about 9 seconds), since it reads every record back to a week before the ledger's first row. |
 
 Three things run a model: `lmg proxy`, every form of `lmg ask` but `clean` and `list` (`review` included), and the Haiku fallback of `lmg usage` described below. `lmg usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored; a redirect is refused rather than followed, because following it would send the token on. When that request cannot be made or fails -- an expired token, no credentials file, no network, an error status, a broken reply or one of another shape -- it falls back to a one-word Haiku call, which costs a little and refreshes the login.
@@ -49,7 +49,7 @@ lmg:
     calls:                           # every call each plan was spent on, and its API cost
       --hours N:                     # default 5
       --since "YYYY-MM-DD HH:MM":    # local time; overrides --hours
-    tasks:                           # what a task costs each window, and every task
+    tasks:                           # every task, then what a task costs each window
     worth:                           # each window's size and use, in dollars
 ```
 

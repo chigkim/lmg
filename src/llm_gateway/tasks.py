@@ -1,6 +1,6 @@
 """What each task cost the windows of its plan, and the average cost `lmg usage` works out tasks left from.
 
-    lmg usage tasks    # each window's task cost and how many tasks it is from, then every task
+    lmg usage tasks    # every task, then each window's task cost and how many tasks it is from
 
 A task is a `before: NAME` row and the next `after: NAME` row in the ledger,
 written by `lmg usage "before: NAME"` and `lmg usage "after: NAME"` around it.
@@ -55,9 +55,7 @@ def main(argv=None):
              "tasks measured": "tasks on this harness read on that window without overlap"}
     if rough:
         notes["rough"] = f"{', '.join(rough)}: under {ROUGH} tasks measured, so the cost is a first guess"
-    print("what a task costs each window")
-    show(usage.table(["harness", "window", "task cost", "tasks measured"], measured, text=(0, 1), notes=notes))
-    print("\nevery task in the ledger")
+    print("every task in the ledger")
     show(usage.table(
         ["task", "took"] + windows + ["overlapped"],
         [[name, usage.span(minutes * 60)] + [percent(used[w]) if w in used else "-" for w in windows]
@@ -66,6 +64,9 @@ def main(argv=None):
                ", ".join(windows): "% of that window the task used; - is a reading with no figure for it",
                "overlapped": "another task on the same plan ran at the same time, so this one's cost is not"
                              " its own and is left out of the task cost"}))
+    # Last, so a long list does not scroll the figures it adds up to off the screen.
+    print("\nwhat a task costs each window")
+    show(usage.table(["harness", "window", "task cost", "tasks measured"], measured, text=(0, 1), notes=notes))
     return 0
 
 
