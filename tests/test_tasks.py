@@ -32,13 +32,33 @@ def test_an_overlap_on_the_same_plan_is_shared():
 
 
 def test_typical_drops_the_dearest_once_there_are_five():
-    assert tasks.typical([0, 1, 1]) == pytest.approx(0.7)
+    assert tasks.typical([0, 1, 1]) == pytest.approx(2 / 3)
     assert tasks.typical([1, 1, 1, 1, 9]) == 1
 
 
-def test_a_harness_named_for_a_plan_spends_it_and_another_spends_what_its_tasks_took():
-    assert tasks.spends([("codex x", {}), ("pi a", {"claude_5h": 3, "codex_5h": 1}), ("pi b", {"claude_week": 1}),
-                        ("new c", {})]) == {"codex": "codex", "pi": "claude", "new": None}
+def test_one_task_that_moved_a_window_is_not_dropped_as_the_dearest():
+    # Four tasks under the meter's 1% and one of 5%: dropping it would say every task cost under 1%.
+    assert tasks.cost([0, 0, 0, 0, 5]) == "1%" and tasks.room([0, 0, 0, 0, 5], 60) == 60
+
+
+def test_tasks_left_is_divided_by_the_cost_unrounded():
+    # Seven tasks of 1/7% each: rounded to 0.1% first, 93% left would be 930 tasks rather than 651.
+    assert tasks.room([0, 0, 0, 0, 0, 0, 1, 1], 93) == 651 and tasks.cost([0, 0, 0, 0, 0, 0, 1, 1]) == "0.1%"
+
+
+def test_a_harness_named_for_a_plan_spends_it_and_another_spends_what_fell_while_it_ran():
+    assert tasks.spends("codex x", {}) == {"codex"}
+    assert tasks.spends("pi a", {"claude_5h": 3, "codex_5h": 1, "agy_5h": 0}) == {"claude", "codex"}
+    assert tasks.spends("new c", {}) == set()
+
+
+def test_overlap_is_decided_on_the_plans_each_task_spent():
+    # pi mostly spends Claude, but here it ran beside a Codex task while Codex's window fell: both are left out.
+    rows = [row("2026-09-27 09:00", "before: pi a", claude_5h=80), row("2026-09-27 09:10", "after: pi a", claude_5h=75),
+            row("2026-09-27 10:00", "before: pi b", codex_5h=80), row("2026-09-27 10:01", "before: codex c", codex_5h=80),
+            row("2026-09-27 10:20", "after: pi b", codex_5h=77), row("2026-09-27 10:30", "after: codex c", codex_5h=75)]
+    assert [(name, shared) for name, _, _, shared in tasks.paired(rows)] == [
+        ("pi a", False), ("pi b", True), ("codex c", True)]
 
 
 def test_a_reset_during_a_task_is_no_cost():
@@ -61,7 +81,7 @@ def test_a_ledger_time_is_read_to_the_second_or_to_the_minute():
 def test_a_task_named_nothing_has_no_harness():
     rows = [row("2026-09-27 10:00", "before: ", codex_week=80), row("2026-09-27 10:30", "after: ", codex_week=79)]
     [(name, _, used, _)] = tasks.paired(rows)
-    assert tasks.harness_of(name) == "" and tasks.spends([(name, used)]) == {}
+    assert tasks.harness_of(name) == "" and tasks.spends(name, used) == {"codex"}
 
 
 def test_a_task_starting_on_a_window_not_yet_started_costs_its_fall():
@@ -109,14 +129,14 @@ def ledger_of(tmp_path, monkeypatch, rows):
 
 
 def test_a_window_s_cost_and_tasks_left_come_from_its_harness_s_tasks(tmp_path, monkeypatch):
-    # 5h: 60 left at 2% a task runs 30; week: every task moved it nought, so each cost under 1%.
+    # 5h: 60 left at 2% a task runs 30; week: every task moved it nought, so each cost under 1%. One task is rough.
     ledger_of(tmp_path, monkeypatch, [row("2026-09-27 10:00", "before: codex a", codex_5h=90, codex_week=50),
                                       row("2026-09-27 10:30", "after: codex a", codex_5h=88, codex_week=50)])
 
     class Reading:
         left = 60
     assert tasks.costs({"codex_5h": Reading(), "codex_week": Reading(), "agy_5h": Reading()}) == {
-        "codex_5h": ("2%", 30), "codex_week": ("under 1%", "at least 60"), "agy_5h": ("-", "no task yet")}
+        "codex_5h": ("~2%", 30), "codex_week": ("~under 1%", "at least 60"), "agy_5h": ("-", "no task yet")}
 
 
 def test_the_list_names_each_window_s_cost_every_task_and_rough_costs(tmp_path, monkeypatch, capsys):
@@ -126,8 +146,18 @@ def test_the_list_names_each_window_s_cost_every_task_and_rough_costs(tmp_path, 
                                       row("2026-09-27 11:30", "after: pi x", codex_5h=85)])
     assert tasks.main([]) == 0
     out = capsys.readouterr().out
-    assert "| codex   | 5h     |        2% |              1 |" in out
-    assert "| pi x" in out and "codex: under 5 tasks measured" in out
+    assert "| Codex 5h |       ~2% |              1 |" in out and "- ~: a cost from fewer than 5 tasks" in out
+    # pi x ran alone, so what fell is its own; codex a's row shows only its own plan's windows.
+    assert "| pi x" in out and out.index("every task") < out.index("what a task costs")
+
+
+def test_a_ledger_missing_a_column_is_listed_rather_than_a_traceback(tmp_path, monkeypatch, capsys):
+    ledger_of(tmp_path, monkeypatch, [row("2026-09-27 10:00", "before: codex a", codex_5h=90),
+                                      row("2026-09-27 10:30", "after: codex a", codex_5h=88)])
+    path = tasks.usage.LEDGER
+    lines = path.read_text().splitlines()
+    path.write_text("\n".join(",".join(c.split(",")[:4]) for c in lines) + "\n")
+    assert tasks.main([]) == 0 and "every task in the ledger" in capsys.readouterr().out
 
 
 def test_an_empty_ledger_is_said(tmp_path, monkeypatch, capsys):

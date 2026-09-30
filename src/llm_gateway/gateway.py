@@ -611,7 +611,15 @@ def chat_parts(content):
 
 
 def chat_to_responses(body):
-    """A Chat Completions request as a Responses request."""
+    """A Chat Completions request as a Responses request; one missing a field it needs, a tool call with no id
+    say, is refused as a bad request rather than failing as the gateway's own error."""
+    try:
+        return _chat_to_responses(body)
+    except (KeyError, TypeError, AttributeError) as e:
+        raise Refused(400, f"malformed chat request: {type(e).__name__} {e}") from None
+
+
+def _chat_to_responses(body):
     system, items = [], []
     for m in body.get("messages") or []:
         role = m.get("role")

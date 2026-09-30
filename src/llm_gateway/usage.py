@@ -94,6 +94,12 @@ def span(seconds):
     return "".join(parts[:2]) or "0m"
 
 
+ROUGH = 5     # tasks below which a window's task cost is a first guess
+ROUGH_NOTE = f"a cost from fewer than {ROUGH} tasks, so a first guess"
+# How lmg usage names each ledger window, so lmg usage tasks can name them the same.
+LABELS = {"claude_5h": "Claude 5h", "claude_week": "Claude week", "codex_5h": "Codex 5h",
+          "codex_week": "Codex week", "agy_5h": "agy Gemini 5h", "agy_week": "agy Gemini week"}
+
 WEEK = 7 * 24 * 3600
 FIVE_HOURS = 5 * 3600
 
@@ -348,7 +354,11 @@ def main(argv=None):
     report = asked()
     print("\n".join(shown(report, costed(report))))
     if note:
-        record(note, report)
+        try:
+            record(note, report)
+        except OSError as problem:
+            print(f"lmg usage: could not write the reading to {LEDGER}: {problem}", file=sys.stderr)
+            return 1
 
 
 HELP = """\
@@ -356,7 +366,7 @@ lmg usage [NOTE]                   every plan's windows: % left, spare against e
                                    how many more tasks it can run, when each resets
 lmg usage calls [--hours N | --since 'YYYY-MM-DD HH:MM']
                                    every call each plan was spent on, and its public-API dollars
-lmg usage tasks                    what a task costs each window, and every task it is measured from
+lmg usage tasks                    every task in the ledger, then what a task costs each window
 lmg usage worth                    what each window is worth in public-API dollars
 
 A NOTE is 'word: what'. It also adds the reading to the ledger: 'before: NAME' and 'after: NAME' around a task
@@ -449,13 +459,15 @@ def shown(report, costs=None):
         elif isinstance(row, Group):
             group = row.strip().removesuffix(" Models").removesuffix(" models")
         elif isinstance(row, Window):
-            key = f"{plan.lower()}_{row.kind}" if group in ("", "Gemini") else None
+            key = f"{plan.lower()}_{row.kind}" if not group or "Gemini" in group else None
             rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%"]
                         + (list(costs.get(key, ("-", "-"))) if costs is not None else [])
                         + [f"in {span(row.resets - time.time())}, at {when(row.resets)}"])
     said = unread(report)
     headers = ["window", "left", "spare"] + (["task cost", "tasks left"] if costs is not None else []) + ["resets"]
-    table_lines = table(headers, rows, text=(0, len(headers) - 1)) if rows else []
+    rough = costs and any(str(c).startswith("~") for c, _ in costs.values())
+    table_lines = table(headers, rows, text=(0, len(headers) - 1), notes={"~": ROUGH_NOTE} if rough else None) \
+        if rows else []
     return [report[0], ""] + table_lines + ([""] + said if said else [])
 
 
@@ -466,7 +478,7 @@ def costed(report):
     try:
         return tasks.costs(windows(report))
     except Exception as problem:
-        print(f"no tasks left column: {problem}", file=sys.stderr)
+        print(f"no task cost or tasks left column: {problem}", file=sys.stderr)
         return None
 
 

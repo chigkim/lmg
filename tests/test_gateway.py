@@ -189,3 +189,23 @@ def test_a_failed_reply_asked_for_whole_is_an_http_error(monkeypatch):
             return reply.status, await reply.json()
     status, answer = asyncio.run(asked())
     assert status == 502 and answer["error"]["message"] == "over quota"
+
+
+def test_a_malformed_chat_message_is_refused_as_a_bad_request(monkeypatch):
+    async def never(model, body):
+        raise AssertionError("a malformed request reached the provider")
+        yield
+    monkeypatch.setitem(gateway.PROVIDERS, "openai", never)
+    monkeypatch.setattr(gateway, "log", lambda *parts: None)
+    monkeypatch.setattr(gateway, "record", lambda *a, **k: None)
+
+    async def asked(messages):
+        app = web.Application()
+        app.add_routes([web.post("/v1/chat/completions", gateway.chat)])
+        async with test_utils.TestClient(test_utils.TestServer(app)) as client:
+            reply = await client.post("/v1/chat/completions", json={"model": "openai/m", "messages": messages})
+            return reply.status, await reply.json()
+    for messages in ([{"role": "assistant", "tool_calls": [{"function": {"name": "f"}}]}],
+                     [{"role": "tool", "content": "x"}]):
+        status, answer = asyncio.run(asked(messages))
+        assert status == 400 and "message" in answer["error"]

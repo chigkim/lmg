@@ -39,6 +39,7 @@ cache reads, cache writes and output, which add up to what the model read and wr
 the public API at the rates in `prices.csv`. All three sit beside this file.
 """
 import argparse
+import filecmp
 import json
 import os
 import pathlib
@@ -391,7 +392,8 @@ def run(argv, cwd, out, err=None):
             return child.wait()
         except KeyboardInterrupt:
             # Stopped by hand: what it streamed is read as a run stopped part way, and the job still says its id.
-            child.kill()
+            # The whole tree, since on Windows the harness is a .cmd shim over the process doing the work.
+            usage.kill(child)
             child.wait()
             return 130
         finally:
@@ -542,13 +544,19 @@ def changes(tree):
 
 def made(tree, repo):
     """What git ignores in TREE that REPO's own checkout has no path for, so the job made it: a results file, a
-    config it wrote. `git worktree remove` deletes ignored files, with or without its --force (measured). A path the
-    checkout has too is left out, file by file: a folder both have, logs/ say, is looked into, since a file the job
-    wrote there is lost all the same. A virtual environment, a cache or a __pycache__ is a local copy of something
+    config it wrote. `git worktree remove` deletes ignored files, with or without its --force (measured). A file the
+    checkout has too, byte for byte, is left out, file by file: a folder both have, logs/ say, is looked into, since
+    a file the job wrote there is lost all the same, and a file of the same name with other contents is the job's
+    work too. A virtual environment, a cache or a __pycache__ is a local copy of something
     rebuilt at will, and is left out whole. -z, because git quotes a path with a space in it otherwise."""
     entries = checked("status", "--porcelain", "-z", "--ignored", "--untracked-files=all", cwd=tree).split("\0")
     return [path for path in (entry[3:] for entry in entries if entry.startswith("!! "))
-            if not rebuilt(tree, path) and not (repo / path).exists()]
+            if not rebuilt(tree, path) and not copied(tree / path, repo / path)]
+
+
+def copied(ours, theirs):
+    """Whether the file OURS is a copy of THEIRS, so removing it loses nothing."""
+    return theirs.is_file() and ours.is_file() and filecmp.cmp(ours, theirs, shallow=False)
 
 
 def rebuilt(tree, path):

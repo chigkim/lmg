@@ -16,8 +16,9 @@ never the drift between other rows, since another session may be spending
 the same plans -- and a window that rose instead was reset during the task
 and is left out rather than counted as a gain. Spending elsewhere can still
 fall inside a task's own two readings, so the cost on a harness leaves out its
-dearest task (`typical`); a task another task here overlapped is marked
-`shared` and left out, since the two cannot be told apart.
+dearest task once there are five (`typical`); a task another task here
+overlapped on a plan both spent is marked `shared` and left out, since the two
+cannot be told apart.
 
 The tasks a window can run are what it has left over what one task costs it.
 A weekly window reads in whole points and one task rarely moves it, so a
@@ -33,8 +34,8 @@ from . import usage
 
 WINDOWS = usage.WINDOWS
 PLANS = ("claude", "codex", "agy")
-RECENT = 10
-ROUGH = 5     # tasks measured below which a cost is a first guess
+RECENT = 10   # the last tasks a cost is the mean of
+ROUGH = usage.ROUGH
 
 
 def main(argv=None):
@@ -47,27 +48,38 @@ def main(argv=None):
         print("no task in the ledger yet: lmg ask takes a reading before and after each job")
         return 0
     # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
-    windows = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
-    measured = [[w.split("_")[0], w.split("_")[1], cost(seen(done, w)), len(seen(done, w))] for w in windows]
-    rough = sorted({harness for harness, _, _, count in measured if 0 < count < ROUGH}, key=PLANS.index)
-    notes = {"task cost": "% of that window one task takes: the mean of the last ten, less the dearest once there"
-                          " are five; lmg usage divides what is left by it",
-             "tasks measured": "tasks on this harness read on that window without overlap"}
-    if rough:
-        notes["rough"] = f"{', '.join(rough)}: under {ROUGH} tasks measured, so the cost is a first guess"
+    windows = [w for w in WINDOWS if any(row.get(f"{w}_left") for row in rows)]
+    labels = [usage.LABELS[w] for w in windows]
     print("every task in the ledger")
     show(usage.table(
-        ["task", "took"] + windows + ["overlapped"],
-        [[name, usage.span(minutes * 60)] + [percent(used[w]) if w in used else "-" for w in windows]
-         + ["yes" if shared else ""] for name, minutes, used, shared in done],
+        ["task", "took"] + labels + ["overlapped"],
+        [[name, usage.span(minutes * 60)] + [fell(name, used, w) for w in windows] + ["yes" if shared else ""]
+         for name, minutes, used, shared in done],
         notes={"took": "time between the task's before: and after: readings",
-               ", ".join(windows): "% of that window the task used; - is a reading with no figure for it",
-               "overlapped": "another task on the same plan ran at the same time, so this one's cost is not"
-                             " its own and is left out of the task cost"}))
+               ", ".join(labels): "% of that window the task used; - is a window outside the plan of an agy,"
+                                  " claude or codex task, or a reading with no figure for it",
+               "overlapped": "another task on a plan this one spent ran at the same time, so this one's cost is"
+                             " not its own and is left out of the task cost"}))
     # Last, so a long list does not scroll the figures it adds up to off the screen.
+    notes = {"task cost": f"% of that window one task takes: the mean of the last {RECENT}, less the dearest once"
+                          " there are five; lmg usage divides what is left by it",
+             "tasks measured": f"tasks on this harness read on that window without overlap; the cost is from the"
+                               f" last {RECENT} of them"}
+    measured = [[usage.LABELS[w], cost(seen(done, w)), len(seen(done, w))] for w in windows]
+    if any(row[1].startswith("~") for row in measured):
+        notes["~"] = usage.ROUGH_NOTE
     print("\nwhat a task costs each window")
-    show(usage.table(["harness", "window", "task cost", "tasks measured"], measured, text=(0, 1), notes=notes))
+    show(usage.table(["window", "task cost", "tasks measured"], measured, notes=notes))
     return 0
+
+
+def fell(name, used, window):
+    """What a task took from a window, for the list: - outside its plan when it is an agy, claude or codex task,
+    since another session's spending there is none of its own."""
+    harness = harness_of(name)
+    if window not in used or (harness in PLANS and not window.startswith(harness)):
+        return "-"
+    return percent(used[window])
 
 
 def costs(windows):
@@ -78,18 +90,19 @@ def costs(windows):
 
 
 def cost(points):
-    """What one task costs a window, from the POINTS its tasks took."""
+    """What one task costs a window, from the POINTS its tasks took; ~ in front when they are too few to trust."""
     if not points:
         return "-"
     # Every task moved it 0%, so each cost under the meter's 1%.
-    return percent(typical(points)) if typical(points) else "under 1%"
+    shown = percent(typical(points)) if any(points) else "under 1%"
+    return f"~{shown}" if len(points) < ROUGH else shown
 
 
 def room(points, left):
     """How many more tasks a window with LEFT points runs, from the POINTS its tasks took."""
     if not points:
         return "no task yet"
-    if typical(points):
+    if any(points):
         return whole(left / typical(points))
     # Not 1% over all of them: they may each have fallen in a window of its own, so the one bound they give is
     # 1% a task.
@@ -103,24 +116,19 @@ def seen(done, window):
             if harness_of(name) == harness and not shared and window in used]
 
 
-def spends(tasks):
-    """{harness: plan} for every harness among TASKS, pairs of (name, {window: points used}). A harness named for a
-    plan spends it; any other spends the plan its tasks took the most points from, or None while they have taken
-    none. A tie goes to the plan named first in PLANS."""
-    taken = {}
-    for name, used in tasks:
-        harness = harness_of(name)
-        if harness:
-            points = taken.setdefault(harness, dict.fromkeys(PLANS, 0))
-            for window, fall in used.items():
-                points[window.split("_")[0]] += fall
-    return {harness: harness if harness in PLANS else (max(PLANS, key=points.get) if any(points.values()) else None)
-            for harness, points in taken.items()}
+def spends(name, used):
+    """The plans a task spent: the one an agy, claude or codex task is named for, or, for any other, every plan
+    whose window fell while it ran. That can be another task's spending, so an overlap it makes errs toward
+    leaving a cost out rather than counting one twice."""
+    harness = harness_of(name)
+    if harness in PLANS:
+        return {harness}
+    return {window.split("_")[0] for window, fall in used.items() if fall}
 
 
 def percent(points):
     """A share of a window, marked as one: 3%, 0.3%."""
-    return f"{points:g}%"
+    return f"{round(points, 1):g}%"
 
 
 def ledger():
@@ -142,9 +150,10 @@ def whole(ratio):
 
 
 def paired(rows):
-    """(name, minutes, {window: points used}, shared) per paired task. Shared is an overlap with a task that spends
-    the same plan, whose points the two readings cannot tell apart; a codex job running beside an agy job spends
-    another plan and leaves the codex job's figure its own."""
+    """(name, minutes, {window: points used}, shared) per paired task. Shared is an overlap with a task that spent
+    a plan this one spent, whose points the two readings cannot tell apart; a codex job running beside an agy job
+    spends another plan and leaves the codex job's figure its own. A ledger missing a window's columns, as an older
+    layout or a hand edit may, has no figure for it."""
     open_, pairs = {}, []
     for row in rows:
         side, _, name = row["note"].partition(": ")
@@ -154,15 +163,13 @@ def paired(rows):
             before = open_.pop(name)
             used = {}
             for window in WINDOWS:
-                was, now = before[f"{window}_left"], row[f"{window}_left"]
+                was, now = before.get(f"{window}_left"), row.get(f"{window}_left")
                 if was and now and int(was) >= int(now) and same_window(before, row, window):
                     used[window] = int(was) - int(now)
             pairs.append((name, moment(before["time"]), moment(row["time"]), used))
-    plan = spends((name, used) for name, _, _, used in pairs)
+    plans = [spends(name, used) for name, _, _, used in pairs]
     return [(name, (end - start).total_seconds() / 60, used,
-             any(s < end and start < e for j, (n, s, e, _) in enumerate(pairs)
-                 if j != i and plan.get(harness_of(name)) is not None
-                 and plan.get(harness_of(n)) == plan.get(harness_of(name))))
+             any(s < end and start < e and plans[i] & plans[j] for j, (_, s, e, _) in enumerate(pairs) if j != i))
             for i, (name, start, end, used) in enumerate(pairs)]
 
 
@@ -173,7 +180,7 @@ def same_window(before, after, window):
     from then, which the real one, set by the first call, lands after."""
     if int(before[f"{window}_left"] or 0) == 100:
         return True
-    was, now = before[f"{window}_reset"], after[f"{window}_reset"]
+    was, now = before.get(f"{window}_reset"), after.get(f"{window}_reset")
     return not (was and now) or abs((moment(now) - moment(was)).total_seconds()) <= 600
 
 
@@ -184,7 +191,8 @@ def harness_of(name):
 
 def typical(points):
     """What one task on a harness costs a window: the mean of its last `RECENT`,
-    less the dearest when there are enough to spare it. A mean, because a
+    less the dearest when there are enough to spare it and it is not the only
+    one that moved it. A mean, because a
     window reads in whole points and most tasks move it by nought or one, so
     a median says nought for a harness that plainly spends; the dearest dropped,
     because spending from another session inside a task's own two readings
@@ -192,7 +200,7 @@ def typical(points):
     recent = sorted(points[-RECENT:])
     if len(recent) >= 5:
         recent = recent[:-1]
-    return round(statistics.mean(recent), 1)
+    return statistics.mean(recent) or statistics.mean(sorted(points[-RECENT:]))
 
 
 def show(lines):

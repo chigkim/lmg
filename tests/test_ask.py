@@ -290,6 +290,25 @@ def test_clean_keeps_an_ignored_file_the_job_made_but_not_a_copy_the_checkout_ha
     assert not tree.exists()
 
 
+def test_clean_keeps_an_ignored_file_the_job_changed_though_the_checkout_has_one_of_that_name(repo, tmp_path,
+                                                                                              monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    (repo / ".gitignore").write_text("results.db\n")
+    git("add", ".", cwd=repo)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ignore", cwd=repo)
+    (repo / "results.db").write_text("the checkout's own")
+    (tmp_path / "work-prompt.md").write_text("work")
+    ask.job("claude", "edit", tmp_path / "work-prompt.md", None, repo, tmp_path, "m", "3600s")
+    tree = tmp_path / "worktrees" / "claude-work"
+    (tree / "results.db").write_text("the job's work")
+    with pytest.raises(ask.Problem, match=r"1 ignored files the job made \(results.db\)"):
+        ask.clean("claude", "work", repo, tmp_path)
+    # The same bytes as the checkout's are a copy, and nothing is lost with them.
+    (tree / "results.db").write_text("the checkout's own")
+    ask.clean("claude", "work", repo, tmp_path)
+    assert not tree.exists()
+
+
 def test_a_task_copy_is_never_another_job_s_answer(repo, tmp_path, monkeypatch):
     fake_harness(monkeypatch, tmp_path)
     for name in ("foo", "foo-task"):
@@ -389,14 +408,14 @@ def test_clean_keeps_a_file_the_job_wrote_in_an_ignored_folder_the_checkout_has(
     (repo / "logs" / "old.jsonl").write_text("the checkout's")
     tree = edit_job(repo, tmp_path, monkeypatch)
     (tree / "logs").mkdir()
-    (tree / "logs" / "old.jsonl").write_text("a copy the checkout has")
+    (tree / "logs" / "old.jsonl").write_text("the checkout's")
     (tree / "logs" / "new.jsonl").write_text("the job's work")
     (tree / "pkg" / "__pycache__").mkdir(parents=True)
     (tree / "pkg" / "__pycache__" / "m.pyc").write_text("rebuilt at will")
     (tree / "logs" / "a cache").mkdir()
     (tree / "logs" / "a cache" / "CACHEDIR.TAG").write_text("Signature: 8a477f597d28d172789f06886806bc55")
     (tree / "logs" / "a cache" / "lastfailed").write_text("rebuilt at will")
-    (tree / "logs" / "old copy.jsonl").write_text("a copy the checkout has, its name spaced")
+    (tree / "logs" / "old copy.jsonl").write_text("the checkout's")
     (repo / "logs" / "old copy.jsonl").write_text("the checkout's")
     with pytest.raises(ask.Problem, match=r"1 ignored files the job made \(logs/new.jsonl\)"):
         ask.clean("claude", "work", repo, tmp_path)
@@ -451,7 +470,11 @@ def test_a_harness_stopped_by_hand_is_a_run_stopped_part_way(tmp_path, monkeypat
     monkeypatch.setattr(ask.usage, "cli", lambda name: name)
     monkeypatch.setattr(ask.subprocess, "Popen", lambda *a, **k: child)
     monkeypatch.setattr(ask.os, "killpg", lambda pid, sig: None, raising=False)
+    trees = []
+    # The whole tree: on Windows the harness is a .cmd shim over the process doing the work.
+    monkeypatch.setattr(ask.subprocess, "run", lambda argv, **k: trees.append(argv))
     assert ask.run(["claude"], tmp_path, tmp_path / "out.jsonl") == 130 and child.killed
+    assert trees == ([["taskkill", "/F", "/T", "/PID", "0"]] if ask.os.name == "nt" else [])
 
 
 def test_list_shows_the_id_an_earlier_run_named_when_the_latest_said_none(tmp_path):
