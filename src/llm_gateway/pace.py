@@ -186,25 +186,38 @@ def ledger():
         return list(csv.DictReader(book))
 
 
+def seen(done, window):
+    """The points each unshared task of the harness a window belongs to took from it."""
+    harness = window.split("_")[0]
+    return [used[window] for name, _, used, shared in done
+            if harness_of(name) == harness and not shared and window in used]
+
+
+def room(points, left):
+    """(average cost, tasks left) for a window with LEFT points, from the POINTS its tasks took."""
+    if not points:
+        return "-", "no task yet"
+    if typical(points):
+        return percent(typical(points)), whole(left / typical(points))
+    # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
+    # fallen in a window of its own, so the one bound they give is 1% a task.
+    return "under 1%", f"at least {left}"
+
+
+def tasks_left(windows):
+    """{window: tasks left} for `lmg usage`'s table, from {window: Window} read now and the ledger's costs."""
+    done = tasks(ledger())
+    return {window: room(seen(done, window), reading.left)[1] for window, reading in windows.items()}
+
+
 def fit(harness, done, stand, now=None):
     """HARNESS's rows, one for each window of its plan the reading has."""
     now = now or datetime.now()
     rows = []
     for window in (w for w in WINDOWS if w.startswith(harness) and w in stand):
-        seen = [used[window] for name, _, used, shared in done
-                if harness_of(name) == harness and not shared and window in used]
-        left, reset = stand[window]
-        resets = usage.span((reset - now).total_seconds())
-        if not seen:
-            rows.append([harness, window.split("_")[1], "-", f"{left}%", "no task yet", resets, 0])
-        elif typical(seen):
-            cost = typical(seen)
-            runs = whole(left / cost)
-            rows.append([harness, window.split("_")[1], percent(cost), f"{left}%", runs, resets, len(seen)])
-        else:
-            # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
-            # fallen in a window of its own, so the one bound they give is 1% a task.
-            rows.append([harness, window.split("_")[1], "under 1%", f"{left}%", f"at least {left}", resets, len(seen)])
+        points, (left, reset) = seen(done, window), stand[window]
+        rows.append([harness, window.split("_")[1], *room(points, left)[:1], f"{left}%", room(points, left)[1],
+                     usage.span((reset - now).total_seconds()), len(points)])
     return rows or [[harness, "-", "-", "-", "no reading", "-", 0]]
 
 

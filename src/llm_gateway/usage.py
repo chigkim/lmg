@@ -346,7 +346,7 @@ def main(argv=None):
               " as 'before: pi x'; the forms are calls, pace and worth.", file=sys.stderr)
         return 2
     report = asked()
-    print("\n".join(shown(report)))
+    print("\n".join(shown(report, costed(report))))
     if note:
         record(note, report)
 
@@ -435,11 +435,12 @@ def asked():
     return report
 
 
-def shown(report):
+def shown(report, left=None):
     """The report as its time, one table of every window it read, and anything that could not be read under it.
 
     A window is named for its plan, its model group if the plan has more than one, and its length: `agy Gemini
-    5h`. Spare is signed, + ahead of an even pace and - behind it."""
+    5h`. Spare is signed, + ahead of an even pace and - behind it. LEFT, {`codex_5h` and the like: tasks left},
+    adds that column, - for a window it has nothing for, as agy's non-Gemini group."""
     rows, plan, group = [], "", ""
     for row in report[1:]:
         if not row.startswith(" "):
@@ -447,11 +448,25 @@ def shown(report):
         elif isinstance(row, Group):
             group = row.strip().removesuffix(" Models").removesuffix(" models")
         elif isinstance(row, Window):
-            rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%",
-                         f"in {span(row.resets - time.time())}, at {when(row.resets)}"])
+            key = f"{plan.lower()}_{row.kind}" if group in ("", "Gemini") else None
+            rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%"]
+                        + ([left.get(key, "-")] if left is not None else [])
+                        + [f"in {span(row.resets - time.time())}, at {when(row.resets)}"])
     said = unread(report)
-    table_lines = table(["window", "left", "spare", "resets"], rows, text=(0, 3)) if rows else []
+    headers = ["window", "left", "spare"] + (["tasks left"] if left is not None else []) + ["resets"]
+    table_lines = table(headers, rows, text=(0, len(headers) - 1)) if rows else []
     return [report[0], ""] + table_lines + ([""] + said if said else [])
+
+
+def costed(report):
+    """Tasks left on each window the report read, from the ledger's costs; None, and said, if the ledger cannot
+    say, since the windows themselves are still worth printing."""
+    from . import pace
+    try:
+        return pace.tasks_left(windows(report))
+    except Exception as problem:
+        print(f"no tasks left column: {problem}", file=sys.stderr)
+        return None
 
 
 def unread(report):

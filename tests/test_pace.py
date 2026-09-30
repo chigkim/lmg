@@ -156,3 +156,12 @@ def test_pace_takes_a_reading_when_the_ledger_is_stale(tmp_path, monkeypatch, ca
     taken = paced_on(tmp_path, monkeypatch, [row("2020-01-01 10:00:00", "reading: x", codex_5h=50)])
     assert pace.main([]) == 1
     assert taken == ["reading: pace"] and "no plan could be read" in capsys.readouterr().out
+
+
+def test_tasks_left_for_lmg_usage_is_left_over_the_ledger_s_cost(tmp_path, monkeypatch):
+    rows = [row("2026-09-27 10:00", "before: codex a", codex_5h=90), row("2026-09-27 10:30", "after: codex a", codex_5h=88)]
+    paced_on(tmp_path, monkeypatch, rows)
+
+    class Reading:
+        left = 60
+    assert pace.tasks_left({"codex_5h": Reading(), "agy_5h": Reading()}) == {"codex_5h": 30, "agy_5h": "no task yet"}

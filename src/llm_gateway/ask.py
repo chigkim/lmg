@@ -687,7 +687,8 @@ def main(argv, command_line=False):
         return 2
     print(f"exit {status}")
     try:
-        print("\n".join(usage.shown(reading("after", note))))
+        after = reading("after", note)
+        print("\n".join(usage.shown(after, usage.costed(after))))
         print()
         sys.stdout.flush()
         pace.main([])
