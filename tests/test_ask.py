@@ -281,6 +281,7 @@ def test_clean_keeps_an_ignored_file_the_job_made_but_not_a_copy_the_checkout_ha
     tree = tmp_path / "worktrees" / "claude-work"
     (tree / ".venv").mkdir()
     (tree / ".venv" / "f").write_text("rebuilt at will")
+    (tree / ".venv" / "pyvenv.cfg").write_text("home = x")
     (tree / "results.db").write_text("the job's work")
     with pytest.raises(ask.Problem, match=r"1 ignored files the job made \(results.db\)"):
         ask.clean("claude", "work", repo, tmp_path)
@@ -351,3 +352,114 @@ def test_a_job_refused_its_worktree_takes_no_reading(repo, tmp_path, monkeypatch
     with pytest.raises(ask.Problem, match="earlier job"):
         ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
     assert readings == []
+
+
+def edit_job(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    (tmp_path / "work-prompt.md").write_text("work")
+    ask.job("claude", "edit", tmp_path / "work-prompt.md", None, repo, tmp_path, "m", "3600s")
+    return tmp_path / "worktrees" / "claude-work"
+
+
+def test_clean_refuses_commits_made_on_a_detached_head(repo, tmp_path, monkeypatch):
+    tree = edit_job(repo, tmp_path, monkeypatch)
+    git("checkout", "-q", "--detach", cwd=tree)
+    (tree / "b.txt").write_text("b")
+    git("add", "b.txt", cwd=tree)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b", cwd=tree)
+    with pytest.raises(ask.Problem, match="1 commits not in"):
+        ask.clean("claude", "work", repo, tmp_path)
+    assert tree.exists()
+
+
+def test_clean_refuses_when_git_cannot_say_what_would_be_lost(repo, tmp_path, monkeypatch):
+    tree = edit_job(repo, tmp_path, monkeypatch)
+    git("checkout", "-q", "--detach", cwd=tree)
+    git("branch", "-q", "-m", "claude-work", "renamed", cwd=repo)
+    with pytest.raises(ask.Problem, match="git rev-list"):
+        ask.clean("claude", "work", repo, tmp_path)
+    assert tree.exists()
+
+
+def test_clean_keeps_a_file_the_job_wrote_in_an_ignored_folder_the_checkout_has(repo, tmp_path, monkeypatch):
+    (repo / ".gitignore").write_text("logs/\n")
+    git("add", ".", cwd=repo)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ignore", cwd=repo)
+    (repo / "logs").mkdir()
+    (repo / "logs" / "old.jsonl").write_text("the checkout's")
+    tree = edit_job(repo, tmp_path, monkeypatch)
+    (tree / "logs").mkdir()
+    (tree / "logs" / "old.jsonl").write_text("a copy the checkout has")
+    (tree / "logs" / "new.jsonl").write_text("the job's work")
+    (tree / "pkg" / "__pycache__").mkdir(parents=True)
+    (tree / "pkg" / "__pycache__" / "m.pyc").write_text("rebuilt at will")
+    (tree / "logs" / "a cache").mkdir()
+    (tree / "logs" / "a cache" / "CACHEDIR.TAG").write_text("Signature: 8a477f597d28d172789f06886806bc55")
+    (tree / "logs" / "a cache" / "lastfailed").write_text("rebuilt at will")
+    (tree / "logs" / "old copy.jsonl").write_text("a copy the checkout has, its name spaced")
+    (repo / "logs" / "old copy.jsonl").write_text("the checkout's")
+    with pytest.raises(ask.Problem, match=r"1 ignored files the job made \(logs/new.jsonl\)"):
+        ask.clean("claude", "work", repo, tmp_path)
+
+
+def test_a_review_stopped_before_its_answer_keeps_its_number(repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(ask, "reading", lambda stage, note: [])
+    monkeypatch.setattr(ask, "installed", lambda harness: None)
+    monkeypatch.setattr(ask, "child_usage", lambda thread, since: None)
+    written = []
+
+    def stopped(argv, cwd, out, err=None):
+        written.append(out.name)
+        out.write_text(stream({"type": "thread.started", "thread_id": "t1"}))
+        return 130
+    monkeypatch.setattr(ask, "run", stopped)
+    ask.review("HEAD", repo, tmp_path, "m")
+    ask.review("HEAD", repo, tmp_path, "m")
+    assert [name.rsplit("-", 1)[1] for name in written] == ["1.jsonl", "2.jsonl"]
+
+
+def test_ask_does_not_read_pace_toml_until_the_job_has_run():
+    code = "import sys; from llm_gateway import ask; print('llm_gateway.pace' in sys.modules)"
+    assert subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout == "False\n"
+
+
+def test_a_ledger_that_cannot_be_written_is_a_problem_not_a_traceback(monkeypatch):
+    monkeypatch.setattr(ask.usage, "asked", lambda: [])
+
+    def locked(note, report):
+        raise PermissionError("in use")
+    monkeypatch.setattr(ask.usage, "record", locked)
+    with pytest.raises(ask.Problem, match="before reading"):
+        ask.reading("before", "claude x")
+
+
+def test_a_booking_that_fails_is_said_and_the_result_is_not_lost(monkeypatch):
+    def locked(*args):
+        raise PermissionError("in use")
+    monkeypatch.setattr(ask, "book", locked)
+    assert ask.booked("claude x", "repo", "m", {}) == "tokens not booked: in use"
+
+
+def test_a_harness_stopped_by_hand_is_a_run_stopped_part_way(tmp_path, monkeypatch):
+    class Child:
+        pid, waited, killed = 0, 0, False
+
+        def wait(self):
+            self.waited += 1
+            if self.waited == 1:
+                raise KeyboardInterrupt
+            return -9
+
+        def kill(self):
+            self.killed = True
+    child = Child()
+    monkeypatch.setattr(ask.usage, "cli", lambda name: name)
+    monkeypatch.setattr(ask.subprocess, "Popen", lambda *a, **k: child)
+    monkeypatch.setattr(ask.os, "killpg", lambda pid, sig: None, raising=False)
+    assert ask.run(["claude"], tmp_path, tmp_path / "out.jsonl") == 130 and child.killed
+
+
+def test_list_shows_the_id_an_earlier_run_named_when_the_latest_said_none(tmp_path):
+    (tmp_path / "x-1.jsonl").write_text(stream({"type": "system", "session_id": "s1"}))
+    (tmp_path / "x-2.jsonl").write_text("")
+    assert ask.latest_id("claude", tmp_path, "x", 2) == "s1"

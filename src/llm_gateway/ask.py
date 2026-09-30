@@ -30,7 +30,7 @@ its raw output; the id to follow up with is printed. The raw output is streamed,
 holds the id, and `list` finds it there. A follow-up is a new prompt file of the same name, plus that
 id, and may change mode.
 
-A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME` and `after: ...`, so the
+A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME [pid N]` and `after: ...`, so the
 harness is the kind `lmg usage pace` costs. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
 cache reads, cache writes and output, which add up to what the model read and wrote, and what they would cost on
 the public API at the rates in `prices.csv`. All three sit beside this file.
@@ -46,7 +46,8 @@ import sys
 import time
 from datetime import datetime
 
-from . import calls, pace, usage
+# pace is imported where it is used: it reads pace.toml on import, and one that fails would stop every form of ask.
+from . import calls, usage
 
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
@@ -248,6 +249,24 @@ def book(note, repo, model, spent, path=None):
             f" output {spent['output']}; API equivalent {price}")
 
 
+def booked(note, repo, model, spent):
+    """`book`, or the line that says it could not be: a token ledger open elsewhere, or a price that is not a number,
+    loses the booking, not the job's result printed after it."""
+    try:
+        return book(note, repo, model, spent)
+    except (OSError, ValueError) as problem:
+        return f"tokens not booked: {problem}"
+
+
+def checked(*args, cwd):
+    """`git`'s output, or a Problem when it fails: where the answer decides what may be deleted, a failed call read
+    as empty output would read as nothing to lose."""
+    done = git(*args, cwd=cwd)
+    if done.returncode:
+        raise Problem(f"git {' '.join(args)} failed in {cwd}: {done.stderr.strip()}")
+    return done.stdout
+
+
 def git(*args, cwd):
     # Git for Windows prints paths in UTF-8, which the ANSI code page would mangle.
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
@@ -310,7 +329,10 @@ def paired():
 def reading(stage, note):
     """An lmg usage reading into its ledger, which lmg usage pace pairs; a plan that cannot be asked is said and skipped."""
     report = usage.asked()
-    usage.record(f"{stage}: {note}", report)
+    try:
+        usage.record(f"{stage}: {note}", report)
+    except OSError as problem:
+        raise Problem(f"could not write the {stage} reading to {usage.LEDGER}: {problem}")
     return report
 
 
@@ -364,6 +386,11 @@ def run(argv, cwd, out, err=None):
                                  stdin=subprocess.DEVNULL, start_new_session=os.name != "nt")
         try:
             return child.wait()
+        except KeyboardInterrupt:
+            # Stopped by hand: what it streamed is read as a run stopped part way, and the job still says its id.
+            child.kill()
+            child.wait()
+            return 130
         finally:
             # Whether or not the harness is still running: what it left in the background is in its group too.
             if os.name != "nt":
@@ -443,7 +470,7 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
             status = status or (124 if trouble.startswith("timed") else 1)
         answer.write_text(said, encoding="utf-8")
     if spent:
-        lines.append(book(note, repo.name, model, spent))
+        lines.append(booked(note, repo.name, model, spent))
     lines.append(f"answer: {answer}; work: {tree}")
     print("\n".join(lines), flush=True)
     return status, note, (harness, name)
@@ -459,7 +486,8 @@ def review(sha, repo, home, model):
     runs = home / "runs" / "codex"
     runs.mkdir(parents=True, exist_ok=True)
     n = 1
-    while (runs / f"review-{sha}-{n}.md").exists():
+    # By the raw output, which every run writes; codex writes the answer only when it finishes.
+    while (runs / f"review-{sha}-{n}.jsonl").exists():
         n += 1
     answer, raw, log = (runs / f"review-{sha}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
     note = f"review {sha}" + paired()
@@ -472,7 +500,7 @@ def review(sha, repo, home, model):
     # A review's own events count no tokens (measured): the work is a child session, whose rollout names it as parent.
     spent = child_usage(thread, started)
     if spent:
-        print(book(note, repo.name, model, spent))
+        print(booked(note, repo.name, model, spent))
     print(f"answer: {answer}")
     return status, note, None
 
@@ -498,16 +526,27 @@ def child_usage(thread, since, sessions=pathlib.Path.home() / ".codex" / "sessio
 
 def changes(tree):
     """TREE's uncommitted changes, TASK.md left out, as `git status --porcelain` lines."""
-    return [line for line in git("status", "--porcelain", cwd=tree).stdout.splitlines()
+    return [line for line in checked("status", "--porcelain", cwd=tree).splitlines()
             if line[3:] != "TASK.md"]
 
 
 def made(tree, repo):
     """What git ignores in TREE that REPO's own checkout has no path for, so the job made it: a results file, a
     config it wrote. `git worktree remove` deletes ignored files, with or without its --force (measured). A path the
-    checkout has too, a .venv or a __pycache__, is a local copy of something rebuilt at will, and is left out."""
-    entries = git("status", "--porcelain", "--ignored", cwd=tree).stdout.splitlines()
-    return [line[3:] for line in entries if line.startswith("!! ") and not (repo / line[3:].rstrip("/")).exists()]
+    checkout has too is left out, file by file: a folder both have, logs/ say, is looked into, since a file the job
+    wrote there is lost all the same. A virtual environment, a cache or a __pycache__ is a local copy of something
+    rebuilt at will, and is left out whole. -z, because git quotes a path with a space in it otherwise."""
+    entries = checked("status", "--porcelain", "-z", "--ignored", "--untracked-files=all", cwd=tree).split("\0")
+    return [path for path in (entry[3:] for entry in entries if entry.startswith("!! "))
+            if not rebuilt(tree, path) and not (repo / path).exists()]
+
+
+def rebuilt(tree, path):
+    """Whether PATH, under TREE, lies in a __pycache__, or in a folder a pyvenv.cfg marks a virtual environment or a
+    CACHEDIR.TAG a cache, as .pytest_cache is."""
+    parts = pathlib.PurePosixPath(path).parts
+    return "__pycache__" in parts or any((tree.joinpath(*parts[:i]) / marker).exists()
+                                         for i in range(1, len(parts)) for marker in ("pyvenv.cfg", "CACHEDIR.TAG"))
 
 
 def clean(harness, name, repo, home, force=False):
@@ -518,11 +557,14 @@ def clean(harness, name, repo, home, force=False):
     if common(tree) != common(repo):
         raise Problem(f"{tree} is not a worktree of {repo}")
     if not force:
-        unmerged = git("rev-list", "--count", "HEAD.." + tree.name, cwd=repo).stdout.strip()
+        # The branch and wherever the worktree's HEAD is: an agent that detached it and committed left the branch behind.
+        at = checked("rev-parse", "HEAD", cwd=tree).strip()
+        unmerged = int(checked("rev-list", "--count", "^HEAD", tree.name, at, cwd=repo))
         changed, new = changes(tree), made(tree, repo)
-        if changed or new or unmerged not in ("", "0"):
+        if changed or new or unmerged:
+            shown = ", ".join(new[:5]) + (f" and {len(new) - 5} more" if len(new) > 5 else "")
             raise Problem(f"{tree} has {len(changed)} uncommitted files, {len(new)} ignored files the job made"
-                          f"{' (' + ', '.join(new) + ')' if new else ''} and {unmerged or 0} commits not in"
+                          f"{' (' + shown + ')' if new else ''} and {unmerged} commits not in"
                           f" {repo.name}'s HEAD: merge what is worth keeping, or clean with --force")
     for step in (("worktree", "remove", "--force", str(tree)), ("branch", "-D", "-q", tree.name)):
         done = git(*step, cwd=repo)
@@ -556,13 +598,23 @@ def jobs(repo, home):
         runs = home / "runs" / harness
         n = numbered(runs, name) - 1
         last = runs / f"{name}-{n}.jsonl"
-        text = last.read_text(encoding="utf-8", errors="replace") if last.exists() else ""
         answer = runs / f"{name}-{n}.md"
         said = "yes" if answer.exists() and answer.stat().st_size else "no"
         changed = changes(tree)
         age = usage.span(time.time() - (last if last.exists() else tree).stat().st_mtime)
-        rows.append([tree.name, n, age, said, len(changed), session(harness, text) or "-"])
+        rows.append([tree.name, n, age, said, len(changed), latest_id(harness, runs, name, n) or "-"])
     return rows
+
+
+def latest_id(harness, runs, name, n):
+    """The id of the latest of runs 1 to N that got far enough to say one: a follow-up stopped before its first event
+    leaves the session the earlier runs named."""
+    for earlier in range(n, 0, -1):
+        path = runs / f"{name}-{earlier}.jsonl"
+        found = path.exists() and session(harness, path.read_text(encoding="utf-8", errors="replace"))
+        if found:
+            return found
+    return ""
 
 
 def listing(repo, home):
@@ -625,6 +677,7 @@ def main(argv, command_line=False):
         return 2
     print(f"exit {status}")
     try:
+        from . import pace
         print("\n".join(usage.shown(reading("after", note))))
         print()
         sys.stdout.flush()
