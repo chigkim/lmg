@@ -255,10 +255,10 @@ def test_lmg_hands_each_group_the_rest_of_the_line(monkeypatch):
     assert cli.main(["ask", "list"]) == 0
     assert cli.main(["usage", "before: pi x"]) == 0
     assert cli.main(["usage", "calls", "--hours", "1"]) == 0
-    assert cli.main(["usage", "pace", "--brief"]) == 0
+    assert cli.main(["usage", "pace", "--tasks"]) == 0
     assert cli.main(["usage", "worth"]) == 0
     assert seen == [("proxy", ["status", "--port", "9"]), ("ask", ["list"], False), ("usage", ["before: pi x"]),
-                    ("calls", ["--hours", "1"]), ("pace", ["--brief"]), ("worth", [])]
+                    ("calls", ["--hours", "1"]), ("pace", ["--tasks"]), ("worth", [])]
     assert cli.main(["nope"]) == 2
 
 

@@ -355,7 +355,7 @@ HELP = """\
 lmg usage [NOTE]                   every plan's windows: % left, spare against even pace, when each resets
 lmg usage calls [--hours N | --since 'YYYY-MM-DD HH:MM']
                                    every call each plan was spent on, and its public-API dollars
-lmg usage pace [--fresh] [--brief] what a task on each harness costs a window, and how many more fit
+lmg usage pace [--tasks]           what can run now: how many more tasks each harness fits
 lmg usage worth                    what each window is worth in public-API dollars
 
 A NOTE is 'word: what'. It also adds the reading to the ledger: 'before: NAME' and 'after: NAME' around a task

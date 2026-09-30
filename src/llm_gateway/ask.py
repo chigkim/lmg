@@ -690,7 +690,7 @@ def main(argv, command_line=False):
         print("\n".join(usage.shown(reading("after", note))))
         print()
         sys.stdout.flush()
-        pace.main(["--brief"])
+        pace.main([])
     except (Exception, SystemExit) as problem:
         # The job has run; a reading that fails loses the accounting, not the answer.
         print(f"the after reading failed, so this job is not in the ledger's costs: {problem}", file=sys.stderr)

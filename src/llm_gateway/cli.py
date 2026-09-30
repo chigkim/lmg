@@ -4,7 +4,7 @@
     lmg ask agy|claude|codex read|edit PROMPT [ID]   a job, and review, clean and list: ask.py
     lmg usage [NOTE]                             each plan's windows, and a ledger row with a note: usage.py
     lmg usage calls ...                          every call each plan was spent on: calls.py
-    lmg usage pace ...                           what a task on each harness costs, and how many more fit: pace.py
+    lmg usage pace ...                           what can run now: how many more tasks each harness fits: pace.py
     lmg usage worth                              what each window is worth in dollars: calls.py
 
 Each form's own options follow its words; `lmg proxy --help`, `lmg ask --help` and `lmg usage --help` list them.

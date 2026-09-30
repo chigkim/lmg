@@ -45,11 +45,11 @@ def test_a_harness_is_paced_on_the_window_that_fits_fewest():
     done = [("codex a", 10, {"codex_5h": 2, "codex_week": 1}, False)]
     # 5h: 40 spare at 2% a task fits 20; week: 10 spare at 1% fits 10, so the week binds.
     stand = {"codex_5h": (90, 50, 40), "codex_week": (60, 50, 10)}
-    assert pace.fit("codex", "codex", done, stand)[:4] == ["codex", "codex_week", "1.00%", "10"]
+    assert pace.fit("codex", "codex", done, stand)[2:5] == ["codex_week", "1.00%", "10"]
     stand["codex_5h"] = (60, 50, 10)
-    assert pace.fit("codex", "codex", done, stand)[:4] == ["codex", "codex_5h", "2.00%", "5"]
-    assert pace.fit("codex", "codex", [], stand)[3] == "no task yet"
-    assert pace.fit("codex", "codex", done, {})[3] == "no reading"
+    assert pace.fit("codex", "codex", done, stand)[2:5] == ["codex_5h", "2.00%", "5"]
+    assert pace.fit("codex", "codex", [], stand)[4] == "no task yet"
+    assert pace.fit("codex", "codex", done, {})[4] == "no reading"
 
 
 def test_a_reset_during_a_task_is_no_cost():
@@ -111,7 +111,48 @@ def test_an_overlap_of_other_harnesses_on_the_plan_they_spent_is_shared():
 def test_pace_takes_help_and_refuses_an_option_it_has_not(capsys):
     with pytest.raises(SystemExit) as done:
         pace.main(["--help"])
-    assert done.value.code == 0 and "--brief" in capsys.readouterr().out
+    assert done.value.code == 0 and "--tasks" in capsys.readouterr().out
     with pytest.raises(SystemExit) as done:
         pace.main(["--bogus"])
     assert done.value.code == 2
+
+
+def paced_on(tmp_path, monkeypatch, rows):
+    ledger = tmp_path / "usage-ledger.csv"
+    monkeypatch.setattr(pace.usage, "LEDGER", ledger)
+    with ledger.open("w", encoding="utf-8", newline="") as book:
+        import csv
+        writer = csv.DictWriter(book, ["time", "note"] + [f"{w}_{k}" for w in pace.WINDOWS for k in ("left", "reset")])
+        writer.writeheader()
+        writer.writerows(rows)
+    taken = []
+    monkeypatch.setattr(pace.usage, "asked", lambda: "report")
+    monkeypatch.setattr(pace.usage, "record", lambda note, report: taken.append(note))
+    return taken
+
+
+def test_pace_shows_harnesses_leaves_out_one_offs_and_marks_rough_costs(tmp_path, monkeypatch, capsys):
+    from datetime import datetime, timedelta
+    now = datetime.now()
+
+    def at(minutes):
+        return (now - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = [row(at(50), "before: codex a", codex_5h=90), row(at(40), "after: codex a", codex_5h=88),
+            row(at(30), "before: run34", codex_5h=88), row(at(20), "after: run34", codex_5h=80)]
+    rows[-1]["codex_5h_reset"] = (now + timedelta(hours=4)).strftime("%Y-%m-%d %H:%M")
+    rows.append(dict(rows[-1], time=at(0), note="reading: x"))
+    taken = paced_on(tmp_path, monkeypatch, rows)
+    assert pace.main([]) == 0
+    out = capsys.readouterr().out
+    # The ledger's last row is fresh, so no reading is taken; run34 has one task and gets no row.
+    assert taken == []
+    assert "| codex " in out and "| run34" not in out
+    assert "run34: fewer than 3 tasks" in out and "codex: under 5 tasks measured" in out
+    assert "every task in the ledger" not in out
+    assert pace.main(["--tasks"]) == 0 and "every task in the ledger" in capsys.readouterr().out
+
+
+def test_pace_takes_a_reading_when_the_ledger_is_stale(tmp_path, monkeypatch, capsys):
+    taken = paced_on(tmp_path, monkeypatch, [row("2020-01-01 10:00:00", "reading: x", codex_5h=50)])
+    assert pace.main([]) == 1
+    assert taken == ["reading: pace"] and "no plan could be read" in capsys.readouterr().out

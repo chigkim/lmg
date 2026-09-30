@@ -1,8 +1,10 @@
-"""The usage calculator: what each task cost, and how many more fit now.
+"""What can run now: how many more tasks each harness fits before a window falls behind even pace.
 
-    lmg usage pace            # from the ledger's last reading
-    lmg usage pace --fresh    # take a reading first
-    lmg usage pace --brief    # costs and room, no task table
+    lmg usage pace            # one row a harness, on a reading taken now
+    lmg usage pace --tasks    # and every task the costs are measured from
+
+It takes a reading of its own unless the ledger's last row is under a minute
+old, as it is when `lmg ask` has just written its after reading.
 
 A task is a `before: NAME` row and the next `after: NAME` row in the ledger,
 written by `lmg usage "before: NAME"` and `lmg usage "after: NAME"` around it.
@@ -42,6 +44,9 @@ LENGTH = {"5h": 5 * 3600, "week": 7 * 24 * 3600}
 WINDOWS = usage.WINDOWS
 PLANS = ("claude", "codex", "agy")
 RECENT = 10
+FRESH = 60    # seconds a ledger reading stays fresh enough to pace on
+LEAST = 3     # tasks a name other than a plan's needs before it is a harness rather than a one-off
+ROUGH = 5     # tasks measured below which a cost is a first guess
 
 
 def spends(tasks):
@@ -152,73 +157,65 @@ def percent(points):
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(prog="lmg usage pace", description=__doc__.splitlines()[0])
-    parser.add_argument("--fresh", action="store_true", help="take a reading first, as the note 'reading: pace'")
-    parser.add_argument("--brief", action="store_true", help="costs and room, without the table of every task")
+    parser.add_argument("--tasks", action="store_true", help="list every task the costs are measured from")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
-    if args.fresh:
+    rows = ledger()
+    if not rows or (datetime.now() - moment(rows[-1]["time"])).total_seconds() > FRESH:
         usage.record("reading: pace", usage.asked())
-    if not usage.LEDGER.exists():
-        print(f"no ledger yet at {usage.LEDGER}; run with --fresh, or lmg usage with a note")
-        return
-    with usage.LEDGER.open(encoding="utf-8", newline="") as book:
-        rows = list(csv.DictReader(book))
+        rows = ledger()
     done = tasks(rows)
+    latest = next((row for row in reversed(rows) if any(row[f"{w}_reset"] for w in WINDOWS)), None)
+    if latest is None:
+        print("no plan could be read, so nothing can be paced; lmg usage says why")
+        return 1
+    stand = standing(latest)
+    counted = {}
+    for name, *_ in done:
+        counted[harness_of(name)] = counted.get(harness_of(name), 0) + 1
     plans = spends((name, used) for name, _, used, _ in done)
-    if not args.brief:
+    shown = [h for h, plan in plans.items() if plan and (h in PLANS or counted[h] >= LEAST)]
+    hidden = sorted(h for h in plans if h not in shown)
+    fits = [fit(harness, plans[harness], done, stand) for harness in shown]
+    print(f"what can run now, on the reading at {latest['time']}")
+    notes = {"harness": "what ran the task: the first word of its name",
+             "plan": "the plan the harness is named for, or else the one its tasks took the most from",
+             "runs out first": "of the plan's windows, the one that fits the fewest more tasks",
+             "cost per task": "typical % of that window one task takes: the mean of the last ten, less the dearest"
+                              " once there are five",
+             "fit now": "tasks that can start now and leave the window on or ahead of even pace",
+             "then one more every": "how often one more fits after that, as the even line falls",
+             "tasks measured": "tasks on this harness that moved or were read on that window without overlap"}
+    rough = [row[0] for row in fits if isinstance(row[-1], int) and 0 < row[-1] < ROUGH]
+    if rough:
+        notes["rough"] = f"{', '.join(rough)}: under {ROUGH} tasks measured, so the cost is a first guess"
+    if hidden:
+        notes["left out"] = f"{', '.join(hidden)}: fewer than {LEAST} tasks, so a one-off rather than a harness"
+    show(usage.table(["harness", "plan", "runs out first", "cost per task", "fit now", "then one more every",
+                      "tasks measured"], fits, text=(0, 1, 2), notes=notes))
+    if args.tasks:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
-        shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
-        print("every task in the ledger")
+        windows = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
+        print("\nevery task in the ledger")
         show(usage.table(
-            ["task", "took"] + shown + ["overlapped"],
-            [[name, usage.span(minutes * 60)] + [percent(used[w]) if w in used else "-" for w in shown]
+            ["task", "took"] + windows + ["overlapped"],
+            [[name, usage.span(minutes * 60)] + [percent(used[w]) if w in used else "-" for w in windows]
              + ["yes" if shared else ""] for name, minutes, used, shared in done],
             notes={"took": "time between the task's before: and after: readings",
-                   ", ".join(shown): "% of that window the task used; - is a reading with no figure for it",
+                   ", ".join(windows): "% of that window the task used; - is a reading with no figure for it",
                    "overlapped": "another task on the same plan ran at the same time, so this one's cost is not"
                                  " its own and is left out of the typical cost"}))
-        print()
+    return 0
 
-    costs = {}
-    for harness, plan in plans.items():
-        spent = [used for name, _, used, shared in done
-                 if harness_of(name) == harness and not shared]
-        costs[harness] = (len(spent), {w.split("_")[1]: typical([u[w] for u in spent if w in u])
-                                       for w in WINDOWS
-                                       if plan and w.startswith(plan) and any(w in u for u in spent)})
-    if costs:
-        print("what one task on each harness costs")
-        show(usage.table(
-            ["harness", "plan", "tasks measured", "5h window cost", "week window cost"],
-            [[harness, plans[harness] or "-", alone] + [percent(c[k]) if k in c else "-" for k in LENGTH]
-             for harness, (alone, c) in costs.items()], text=(0, 1),
-            notes={"harness": "what ran the task: the first word of its name",
-                   "plan": "the plan the harness is named for, or else the one its tasks took the most from;"
-                           " - while they have taken nothing",
-                   "tasks measured": "tasks on this harness that ran without overlap",
-                   "5h window cost, week window cost": "typical % of that window one task takes: the mean, less"
-                                                        " the dearest task once there are five"}))
 
-    latest = next((row for row in reversed(rows) if any(row[f"{w}_reset"] for w in WINDOWS)),
-                  None)
-    if latest is None:
-        print("\nno reading with reset times yet; run with --fresh")
-        return
-    # The windows themselves are `lmg usage`'s table; this one only needs how far ahead of pace each stood.
-    print(f"\npaced on the reading at {latest['time']} ({latest['note']}); lmg usage shows the windows now\n")
-    stand = standing(latest)
-    fits = [fit(harness, plan, done, stand) for harness, plan in plans.items() if plan]
-    print("how many more tasks fit without falling behind pace")
-    show(usage.table(
-        ["harness", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"], fits, text=(0, 1),
-        notes={"paced on": "of the plan's windows, the one that fits the fewest more tasks",
-               "cost per task": "typical % of that window one task takes, as in the table above",
-               "fit now": "tasks that can run now before the window falls behind even pace",
-               "then one more every": "how often one more fits after that, as the window's pace catches up",
-               "tasks measured": "tasks on this harness measured on that window"}))
+def ledger():
+    if not usage.LEDGER.exists():
+        return []
+    with usage.LEDGER.open(encoding="utf-8", newline="") as book:
+        return list(csv.DictReader(book))
 
 
 def fit(harness, plan, done, stand):
-    """HARNESS's row of the fit table: paced on whichever of PLAN's windows fits the fewest more of its tasks."""
+    """HARNESS's row: paced on whichever of PLAN's windows fits the fewest more of its tasks."""
     rows = []
     for window in (w for w in WINDOWS if w.startswith(plan) and w in stand):
         seen = [used[window] for name, _, used, shared in done
@@ -227,17 +224,18 @@ def fit(harness, plan, done, stand):
         if not seen:
             continue
         if typical(seen):
-            # The same typical cost the table above gives, the dearest task left out.
+            # The same typical cost as every other figure here, the dearest task left out.
             cost = typical(seen)
-            rows.append((whole(spare / cost),
-                         [harness, window, f"{cost:.2f}%", f"{whole(spare / cost)}", every(window, cost), len(seen)]))
+            rows.append((whole(spare / cost), [harness, plan, window, f"{cost:.2f}%", f"{whole(spare / cost)}",
+                                               every(window, cost), len(seen)]))
         else:
             # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
             # fallen in a window of its own, so the one bound they give is 1% a task.
-            rows.append((spare, [harness, window, "under 1%", f"at least {spare}", f"{every(window, 1)} at most",
-                                 len(seen)]))
+            rows.append((spare, [harness, plan, window, "under 1%", f"at least {spare}",
+                                 f"{every(window, 1)} at most", len(seen)]))
     if not rows:
-        return [harness, "-", "-", "no task yet" if any(w.startswith(plan) for w in stand) else "no reading", "-", 0]
+        return [harness, plan, "-", "-", "no task yet" if any(w.startswith(plan) for w in stand) else "no reading",
+                "-", 0]
     return min(rows, key=lambda r: r[0])[1]
 
 
