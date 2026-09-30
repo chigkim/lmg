@@ -82,6 +82,18 @@ The daemon is known by its port. Its pid and console output are in `logs/PORT.pi
 
 Point any OpenAI-compatible client at `http://127.0.0.1:8797/v1`, with `GATEWAY_API_KEY` as its API key. It serves `/v1/responses`, `/v1/chat/completions` and `/v1/models`.
 
+Codex takes it as a provider in `~/.codex/config.toml`, with the key in an environment variable rather than the file:
+
+```toml
+[model_providers.lmg]
+name = "lmg proxy"
+base_url = "http://127.0.0.1:8797/v1"
+env_key = "LMG_KEY"
+wire_api = "responses"
+```
+
+Then `codex exec -c model_provider=lmg -m anthropic/claude-haiku-4-5 "..."` runs Codex on Claude, its shell tool included, with `LMG_KEY` set to the gateway's key. Codex warns that it has no metadata for a model it does not know and carries on.
+
 ### API key
 
 Every request needs `Authorization: Bearer KEY`, which is what an OpenAI client sends for its API key. The gateway reads `GATEWAY_API_KEY` from the environment first, then from the first `.env` found from the working directory upward. With neither, the first run generates a random key, writes it to `.env` in the working directory (appending if that file exists without one) and says so, without printing the key. Give a client the value from that file. `.env` is gitignored. The key is compared in constant time and never logged.
@@ -116,7 +128,7 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 ### Limits
 
 - It binds to `127.0.0.1` only. Anything on this machine that can read `.env` can use it.
-- Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. A full agent harness sending its own system prompt, such as Pi, is refused with `Third-party apps now draw from extra usage` unless Extra Usage is on.
+- Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. A full agent harness sending its own system prompt, such as Pi, is refused with `Third-party apps now draw from extra usage` unless Extra Usage is on. The check reads the prompt's content, not the fact that it is another agent's: Pi's prompt was refused on a phrase in it, while Hermes Agent's own 15,000-character prompt, which names Nous Research, passed on Haiku 4.5 and Opus 5.5 in September 2026.
 - A conversation with no live Claude session (after a restart, or a client that edited its history) is replayed to a fresh session as a transcript.
 - Claude's thinking is not passed back. The Codex backend drops fields it does not accept, such as `temperature`.
 
