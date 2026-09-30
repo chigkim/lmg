@@ -205,7 +205,7 @@ def main(argv=None):
             [[harness, SPENDS[harness], alone] + [percent(c[k]) if k in c else "-" for k in LENGTH]
              for harness, (alone, c) in costs.items()], text=(0, 1),
             notes={"harness": "what ran the task: the first word of its name",
-                   "plan": "the plan this harness spends, from pace.toml",
+                   "plan": f"the plan of the window this harness is paced on, in {usage.DATA / 'pace.toml'}",
                    "tasks measured": "tasks on this harness that ran without overlap",
                    "5h window cost, week window cost": "typical % of that window one task takes: the mean, less"
                                                         " the dearest task once there are five"}))
