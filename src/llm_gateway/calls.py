@@ -1,8 +1,8 @@
 """What the Claude, Codex and agy plans were spent on: every call's tokens, who made it, and its public-API dollars.
 
-    lmg usage plan                            # the last five hours
-    lmg usage plan --hours 24
-    lmg usage plan --since "2026-09-27 12:00"
+    lmg usage calls                           # the last five hours
+    lmg usage calls --hours 24
+    lmg usage calls --since "2026-09-27 12:00"
     lmg usage worth                           # each 5h and weekly window's size and use, in dollars
 
 A plan's limit counts every call made on it, whoever made it, so this reads every record each client leaves:
@@ -468,7 +468,7 @@ def worth(argv=()):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="lmg usage plan", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="lmg usage calls", description=__doc__.splitlines()[0])
     parser.add_argument("--hours", type=float, default=5)
     parser.add_argument("--since", help="YYYY-MM-DD HH:MM, local time; overrides --hours")
     args = parser.parse_args(argv)

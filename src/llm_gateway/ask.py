@@ -46,7 +46,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import pace, plan, usage
+from . import calls, pace, usage
 
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
@@ -229,7 +229,7 @@ def read_agy(text, before=""):
 def cost(model, spent, table):
     """What SPENT would cost on the public API, or None for a model with no price. The long-context rate is per call
     and cannot be told from a job's totals, so it is not applied."""
-    rate = table.get(plan.base(model))
+    rate = table.get(calls.base(model))
     if rate is None:
         return None
     return (spent["input"] * rate["input"] + spent["cache_read"] * rate["cache_read"]
@@ -240,10 +240,10 @@ def cost(model, spent, table):
 def book(note, repo, model, spent, path=None):
     """One row of the token ledger, TOKENS unless PATH; returns the line that says it."""
     path = path or TOKENS
-    usd = cost(model, spent, plan.prices())
+    usd = cost(model, spent, calls.prices())
     usage.append(path, TOKEN_FIELDS, {"time": datetime.now().strftime(usage.STAMP), "note": note, "repo": repo,
                                       "model": model, **spent, "usd": "" if usd is None else f"{usd:.2f}"})
-    price = f"${usd:.2f}" if usd is not None else f"unknown ({model} has no price in {plan.PRICES})"
+    price = f"${usd:.2f}" if usd is not None else f"unknown ({model} has no price in {calls.PRICES})"
     return (f"tokens: input {spent['input']}, cache read {spent['cache_read']}, cache write {spent['cache_write']},"
             f" output {spent['output']}; API equivalent {price}")
 

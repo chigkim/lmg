@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-from llm_gateway import ask, cli, daemon, pace, plan, usage
+from llm_gateway import ask, calls, cli, daemon, pace, usage
 
 
 def test_a_job_is_named_after_its_prompt_file():
@@ -121,7 +121,7 @@ def test_cost_prices_hour_long_cache_writes_at_their_own_rate():
 
 
 def test_the_token_ledger_row_carries_the_repo(tmp_path, monkeypatch):
-    monkeypatch.setattr(ask.plan, "prices", lambda: {})
+    monkeypatch.setattr(ask.calls, "prices", lambda: {})
     path = tmp_path / "tokens.csv"
     line = ask.book("codex x", "some-repo", "nobody", ask.counts(1, 2, 3, 0, 4), path)
     assert "unknown" in line
@@ -147,7 +147,7 @@ def repo(tmp_path):
 def test_a_job_runs_in_its_own_worktree_and_leaves_its_answer_in_runs(repo, tmp_path, monkeypatch):
     monkeypatch.setattr(ask, "reading", lambda stage, note: [])
     monkeypatch.setattr(ask, "installed", lambda harness: None)
-    monkeypatch.setattr(ask.plan, "prices", lambda: {})
+    monkeypatch.setattr(ask.calls, "prices", lambda: {})
     monkeypatch.setattr(ask, "TOKENS", tmp_path / "tokens.csv")
     seen = {}
 
@@ -207,7 +207,7 @@ def test_an_agy_follow_up_subtracts_the_last_run_of_its_own_conversation(tmp_pat
 def fake_harness(monkeypatch, tmp_path):
     monkeypatch.setattr(ask, "reading", lambda stage, note: [])
     monkeypatch.setattr(ask, "installed", lambda harness: None)
-    monkeypatch.setattr(ask.plan, "prices", lambda: {})
+    monkeypatch.setattr(ask.calls, "prices", lambda: {})
     monkeypatch.setattr(ask, "TOKENS", tmp_path / "tokens.csv")
     monkeypatch.setattr(ask, "run", lambda argv, cwd, out, err=None: out.write_text(stream(
         {"type": "result", "result": "ok", "session_id": "s9", "usage": {}})) and 0)
@@ -247,17 +247,17 @@ def test_lmg_hands_each_group_the_rest_of_the_line(monkeypatch):
     monkeypatch.setattr(daemon, "main", lambda argv: seen.append(("proxy", argv)) or 0)
     monkeypatch.setattr(ask, "main", lambda argv, command_line: seen.append(("ask", argv, command_line)) or 0)
     monkeypatch.setattr(usage, "main", lambda argv: seen.append(("usage", argv)) or 0)
-    monkeypatch.setattr(plan, "main", lambda argv: seen.append(("plan", argv)) or 0)
+    monkeypatch.setattr(calls, "main", lambda argv: seen.append(("calls", argv)) or 0)
     monkeypatch.setattr(pace, "main", lambda argv: seen.append(("pace", argv)) or 0)
-    monkeypatch.setattr(plan, "worth", lambda argv: seen.append(("worth", argv)) or 0)
+    monkeypatch.setattr(calls, "worth", lambda argv: seen.append(("worth", argv)) or 0)
     assert cli.main(["proxy", "status", "--port", "9"]) == 0
     assert cli.main(["ask", "list"]) == 0
     assert cli.main(["usage", "before: session x"]) == 0
-    assert cli.main(["usage", "plan", "--hours", "1"]) == 0
+    assert cli.main(["usage", "calls", "--hours", "1"]) == 0
     assert cli.main(["usage", "pace", "--brief"]) == 0
     assert cli.main(["usage", "worth"]) == 0
     assert seen == [("proxy", ["status", "--port", "9"]), ("ask", ["list"], False), ("usage", ["before: session x"]),
-                    ("plan", ["--hours", "1"]), ("pace", ["--brief"]), ("worth", [])]
+                    ("calls", ["--hours", "1"]), ("pace", ["--brief"]), ("worth", [])]
     assert cli.main(["askai"]) == 2
 
 

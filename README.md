@@ -7,7 +7,7 @@ One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed
 | `lmg proxy [run\|start\|stop\|restart\|status]` | The gateway. It speaks OpenAI's Responses and Chat Completions APIs, and answers them from a Claude or ChatGPT subscription instead of an API key. |
 | `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
 | `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), and when each resets. With a note, it also adds a row to the ledger, which keeps agy's Gemini group only. |
-| `lmg usage plan [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it, with tokens and what they would cost on the public API. |
+| `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it, with tokens and what they would cost on the public API. |
 | `lmg usage worth` | What each window is worth in dollars, sized from the ledger and those records, and how much of it is spent. Slower than the rest, since it reads every record back to the ledger's first row. |
 | `lmg usage pace [--fresh] [--brief]` | What each kind of task costs a window, from paired `before:` and `after:` rows in the ledger, and how many more fit, paced on the ledger's latest reading. The windows themselves are `lmg usage`'s. |
 
@@ -46,7 +46,7 @@ lmg:
       --force:                       # clean only: remove it even with unmerged work
   usage:                             # each plan's windows: percent left, resets, pace
     NOTE:                            # optional: also add a ledger row, e.g. "before: session x"
-    plan:                            # every call each plan was spent on, and its API cost
+    calls:                           # every call each plan was spent on, and its API cost
       --hours N:                     # default 5
       --since "YYYY-MM-DD HH:MM":    # local time; overrides --hours
     pace:                            # what each kind of task costs, and how many more fit
@@ -236,9 +236,9 @@ A window is `claude`, `codex` or `agy`, then `_5h` or `_week`. Without the file,
 
 The two ledgers and `pace.toml` are gitignored: they are your records, not the tool's.
 
-## Where `lmg usage plan` reads
+## Where `lmg usage calls` reads
 
-A plan's limit counts every call made on it, by whatever made it, so `lmg usage plan` reads every record the clients leave:
+A plan's limit counts every call made on it, by whatever made it, so `lmg usage calls` reads every record the clients leave:
 
 - Claude: `~/.claude/projects`, Claude Code's transcripts, including calls made through Pi's claude-bridge.
 - Codex: `~/.codex/sessions`, and Pi's `openai-codex` provider in `~/.pi/agent/sessions`.
