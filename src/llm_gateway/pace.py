@@ -8,13 +8,11 @@ old, as it is when `lmg ask` has just written its after reading.
 
 A task is a `before: NAME` row and the next `after: NAME` row in the ledger,
 written by `lmg usage "before: NAME"` and `lmg usage "after: NAME"` around it.
-The first word of NAME is the harness that ran the task -- `lmg ask` writes
-`agy`, `claude` or `codex`, a review included, and a task of your own names
-the harness you work in, such as `pi`. A harness named for a plan spends that
-plan; any other spends the plan its tasks took the most points from, so a Pi
-session on Claude is costed on Claude once one of its tasks has moved it.
-Each harness is paced on whichever of its plan's windows fits the fewest more
-tasks, the one that runs out first.
+The first word of NAME is the harness that ran the task, `agy`, `claude` or
+`codex` as `lmg ask` writes it, a review included, and each spends the plan
+of its own name. A task of your own may be named anything, such as `pi x`:
+it gets no row, but it is listed under --tasks, and a harness task it
+overlaps on the plan it spent is left out of that harness's cost.
 
 A task's cost is only what its windows lost between its own two readings --
 never the drift between other rows, since another session may be spending
@@ -24,9 +22,10 @@ fall inside a task's own two readings, so the cost on a harness leaves out its
 dearest task (`typical`); a task another task here overlapped is marked
 `shared` and left out, since the two cannot be told apart.
 
-The tasks a window can run are what it has left over what one task costs it,
-and a harness can run as many as the window of its plan that allows the
-fewest. A weekly window reads in whole points and one task rarely moves it,
+The tasks a window can run are what it has left over what one task costs it.
+Each window of the harness's plan gets a row, 5-hour and weekly: a 5-hour
+window that runs out soon may reset first, so which one binds is the
+reader's to judge from when each resets. A weekly window reads in whole points and one task rarely moves it,
 so a harness whose tasks have not yet moved it is given the one bound it
 allows: each cost under the meter's 1%, so at least as many as the points left.
 """
@@ -41,7 +40,6 @@ WINDOWS = usage.WINDOWS
 PLANS = ("claude", "codex", "agy")
 RECENT = 10
 FRESH = 60    # seconds a ledger reading stays fresh enough to pace on
-LEAST = 3     # tasks a name other than a plan's needs before it is a harness rather than a one-off
 ROUGH = 5     # tasks measured below which a cost is a first guess
 
 
@@ -151,30 +149,21 @@ def main(argv=None):
         print("no plan could be read, so nothing can be paced; lmg usage says why")
         return 1
     stand = standing(latest)
-    counted = {}
-    for name, *_ in done:
-        counted[harness_of(name)] = counted.get(harness_of(name), 0) + 1
-    plans = spends((name, used) for name, _, used, _ in done)
-    shown = [h for h, plan in plans.items() if plan and (h in PLANS or counted[h] >= LEAST)]
-    hidden = sorted(h for h in plans if h not in shown)
-    fits = [fit(harness, plans[harness], done, stand) for harness in shown]
+    fits = [row for harness in PLANS for row in fit(harness, done, stand)]
     print(f"how many more tasks each harness can run, on the reading at {latest['time']}")
     notes = {"harness": "what ran the task: the first word of its name",
-             "plan": "the plan the harness is named for, or else the one its tasks took the most from",
-             "window": "of the plan's windows, the one that runs out first",
+             "window": "each window of the harness's plan the reading has: 5-hour and weekly",
              "average cost": "% of that window one task takes: the mean of the last ten, less the dearest once"
                              " there are five",
              "left": "% of that window left now",
              "tasks left": "left over average cost: how many more tasks run before the window is empty",
              "resets in": "when the window is whole again",
              "tasks measured": "tasks on this harness read on that window without overlap"}
-    rough = [row[0] for row in fits if isinstance(row[-1], int) and 0 < row[-1] < ROUGH]
+    rough = sorted({row[0] for row in fits if 0 < row[-1] < ROUGH}, key=[row[0] for row in fits].index)
     if rough:
         notes["rough"] = f"{', '.join(rough)}: under {ROUGH} tasks measured, so the cost is a first guess"
-    if hidden:
-        notes["left out"] = f"{', '.join(hidden)}: fewer than {LEAST} tasks, so a one-off rather than a harness"
-    show(usage.table(["harness", "plan", "window", "average cost", "left", "tasks left", "resets in",
-                      "tasks measured"], fits, text=(0, 1, 2), notes=notes))
+    show(usage.table(["harness", "window", "average cost", "left", "tasks left", "resets in", "tasks measured"],
+                     fits, text=(0, 1), notes=notes))
     if args.tasks:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         windows = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
@@ -197,30 +186,26 @@ def ledger():
         return list(csv.DictReader(book))
 
 
-def fit(harness, plan, done, stand, now=None):
-    """HARNESS's row: on whichever of PLAN's windows runs the fewest more of its tasks."""
+def fit(harness, done, stand, now=None):
+    """HARNESS's rows, one for each window of its plan the reading has."""
     now = now or datetime.now()
     rows = []
-    for window in (w for w in WINDOWS if w.startswith(plan) and w in stand):
+    for window in (w for w in WINDOWS if w.startswith(harness) and w in stand):
         seen = [used[window] for name, _, used, shared in done
                 if harness_of(name) == harness and not shared and window in used]
-        if not seen:
-            continue
         left, reset = stand[window]
         resets = usage.span((reset - now).total_seconds())
-        if typical(seen):
+        if not seen:
+            rows.append([harness, window, "-", f"{left}%", "no task yet", resets, 0])
+        elif typical(seen):
             cost = typical(seen)
             runs = whole(left / cost)
-            rows.append((runs, [harness, plan, window, percent(cost), f"{left}%", runs, resets, len(seen)]))
+            rows.append([harness, window, percent(cost), f"{left}%", runs, resets, len(seen)])
         else:
             # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
             # fallen in a window of its own, so the one bound they give is 1% a task.
-            rows.append((left, [harness, plan, window, "under 1%", f"{left}%", f"at least {left}", resets,
-                                len(seen)]))
-    if not rows:
-        return [harness, plan, "-", "-", "-", "no task yet" if any(w.startswith(plan) for w in stand)
-                else "no reading", "-", 0]
-    return min(rows, key=lambda r: r[0])[1]
+            rows.append([harness, window, "under 1%", f"{left}%", f"at least {left}", resets, len(seen)])
+    return rows or [[harness, "-", "-", "-", "no reading", "-", 0]]
 
 
 def show(lines):

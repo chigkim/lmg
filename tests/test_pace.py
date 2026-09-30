@@ -41,16 +41,15 @@ def test_a_harness_named_for_a_plan_spends_it_and_another_spends_what_its_tasks_
                         ("new c", {})]) == {"codex": "codex", "pi": "claude", "new": None}
 
 
-def test_a_harness_runs_as_many_tasks_as_its_tightest_window_allows():
+def test_a_harness_has_a_row_for_each_window_of_its_plan():
     done = [("codex a", 10, {"codex_5h": 2, "codex_week": 1}, False)]
     now = pace.moment("2026-09-30 10:00")
-    # 5h: 60 left at 2% a task runs 30; week: 20 left at 1% runs 20, so the week runs out first.
+    # 5h: 60 left at 2% a task runs 30; week: 20 left at 1% runs 20.
     stand = {"codex_5h": (60, pace.moment("2026-09-30 12:00")), "codex_week": (20, pace.moment("2026-10-02 10:00"))}
-    assert pace.fit("codex", "codex", done, stand, now) == ["codex", "codex", "codex_week", "1%", "20%", 20, "2d", 1]
-    stand["codex_5h"] = (30, pace.moment("2026-09-30 12:00"))
-    assert pace.fit("codex", "codex", done, stand, now)[2:7] == ["codex_5h", "2%", "30%", 15, "2h"]
-    assert pace.fit("codex", "codex", [], stand, now)[5] == "no task yet"
-    assert pace.fit("codex", "codex", done, {}, now)[5] == "no reading"
+    assert pace.fit("codex", done, stand, now) == [["codex", "codex_5h", "2%", "60%", 30, "2h", 1],
+                                                   ["codex", "codex_week", "1%", "20%", 20, "2d", 1]]
+    assert [row[4] for row in pace.fit("codex", [], stand, now)] == ["no task yet", "no task yet"]
+    assert pace.fit("codex", done, {}, now)[0][4] == "no reading"
 
 
 def test_a_reset_during_a_task_is_no_cost():
@@ -132,7 +131,7 @@ def paced_on(tmp_path, monkeypatch, rows):
     return taken
 
 
-def test_pace_shows_harnesses_leaves_out_one_offs_and_marks_rough_costs(tmp_path, monkeypatch, capsys):
+def test_pace_shows_only_the_three_harnesses_and_marks_rough_costs(tmp_path, monkeypatch, capsys):
     from datetime import datetime, timedelta
     now = datetime.now()
 
@@ -145,10 +144,10 @@ def test_pace_shows_harnesses_leaves_out_one_offs_and_marks_rough_costs(tmp_path
     taken = paced_on(tmp_path, monkeypatch, rows)
     assert pace.main([]) == 0
     out = capsys.readouterr().out
-    # The ledger's last row is fresh, so no reading is taken; run34 has one task and gets no row.
+    # The ledger's last row is fresh, so no reading is taken; run34 is no harness and gets no row.
     assert taken == []
-    assert "| codex " in out and "| run34" not in out
-    assert "run34: fewer than 3 tasks" in out and "codex: under 5 tasks measured" in out
+    assert "| codex " in out and "| agy " in out and "run34" not in out
+    assert "codex: under 5 tasks measured" in out
     assert "every task in the ledger" not in out
     assert pace.main(["--tasks"]) == 0 and "every task in the ledger" in capsys.readouterr().out
 
