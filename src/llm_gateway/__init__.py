@@ -1,4 +1,4 @@
-"""A loopback LLM gateway: OpenAI's APIs in, Claude and Codex subscription plans out."""
-from .daemon import main
+"""A loopback LLM gateway, and the jobs and plans behind it: one command, lmg."""
+from .cli import main
 
 __all__ = ["main"]

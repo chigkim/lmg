@@ -1,10 +1,10 @@
 """The command line: run the gateway in the foreground, or start, stop and check it as a background daemon.
 
-    llm-gateway [run]        serve in this console until Ctrl-C
-    llm-gateway start        serve in the background; returns once it is listening
-    llm-gateway stop         stop the background gateway and everything it started
-    llm-gateway restart      stop, then start
-    llm-gateway status       whether it is running, its pid and its log
+    lmg proxy [run]        serve in this console until Ctrl-C
+    lmg proxy start        serve in the background; returns once it is listening
+    lmg proxy stop         stop the background gateway and everything it started
+    lmg proxy restart      stop, then start
+    lmg proxy status       whether it is running, its pid and its log
 
 A daemon is known by its port: its pid and console output are in logs/PORT.pid and logs/PORT.log in this project,
 found from this file rather than the working directory, so `stop` and `status` work from any folder. It runs in the
@@ -99,7 +99,7 @@ def start(args):
         return 1
     STATE.mkdir(parents=True, exist_ok=True)
     config = str(pathlib.Path(args.config).resolve())
-    argv = [sys.executable, "-m", "llm_gateway", "run", "--port", str(args.port), "--config", config]
+    argv = [sys.executable, "-m", "llm_gateway", "proxy", "run", "--port", str(args.port), "--config", config]
     with open(log_file(args.port), "a", encoding="utf-8") as out:
         out.write(f"\n==== start {time.strftime('%Y-%m-%d %H:%M:%S')} in {os.getcwd()}\n")
         out.flush()
@@ -156,12 +156,12 @@ def status(args):
     return 3
 
 
-def main():
-    parser = argparse.ArgumentParser(prog="llm-gateway", description=__doc__.split("\n")[0])
+def main(argv):
+    parser = argparse.ArgumentParser(prog="lmg proxy", description=__doc__.split("\n")[0])
     parser.add_argument("command", nargs="?", default="run", choices=("run", "start", "stop", "restart", "status"))
     parser.add_argument("--port", type=int, default=8797)
     parser.add_argument("--config", default="config.toml", help="settings file (default: config.toml)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command == "run":
         from .gateway import serve
         return serve(args.port, args.config)

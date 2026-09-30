@@ -9,7 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
-# GATEWAY_DUMP output: every prompt and image a client sent
+# Request traces: every prompt and image a client sent
 *.jsonl
 
 # Secrets
@@ -17,3 +17,11 @@ wheels/
 
 # Daemon pid files and console logs
 logs/
+
+# Your own readings, records and settings, written beside the scripts: not the tool's to share.
+/src/llm_gateway/usage-ledger.csv
+/src/llm_gateway/token-ledger.csv
+/src/llm_gateway/pace.toml
+/src/llm_gateway/homes.toml
+
+.pytest_cache/

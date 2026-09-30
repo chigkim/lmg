@@ -1,7 +1,7 @@
 [project]
 name = "llm-gateway"
 version = "0.1.0"
-description = "A loopback LLM gateway: OpenAI Responses and Chat Completions in, Claude and Codex plans out."
+description = "A loopback LLM gateway, jobs handed to agy, Claude Code and Codex in their own git worktrees, and what each plan has left: one command, lmg."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -11,7 +11,10 @@ dependencies = [
 ]
 
 [project.scripts]
-llm-gateway = "llm_gateway:main"
+lmg = "llm_gateway:main"
+
+[dependency-groups]
+dev = ["pytest"]
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
