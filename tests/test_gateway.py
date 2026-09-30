@@ -4,7 +4,9 @@ import os
 import urllib.error
 import urllib.request
 
+import aiohttp
 import pytest
+from aiohttp import test_utils, web
 
 from llm_gateway import daemon, gateway, usage
 
@@ -143,3 +145,47 @@ def test_a_pid_file_whose_pid_started_later_is_stale(tmp_path, monkeypatch):
     assert daemon.running(1) == os.getpid()
     daemon.pid_file(1).write_text(f"{os.getpid()} 1")
     assert daemon.running(1) is None and not daemon.pid_file(1).exists()
+
+
+def test_a_start_time_that_cannot_be_read_is_no_match(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon, "STATE", tmp_path)
+    monkeypatch.setattr(daemon, "born", lambda pid: None)
+    daemon.pid_file(1).write_text(f"{os.getpid()} None")
+    assert daemon.running(1) is None
+
+
+async def raising(error):
+    raise error
+    yield
+
+
+@pytest.mark.parametrize("error, status", [(aiohttp.ClientConnectionError(), 502), (AttributeError("x"), 500),
+                                           (gateway.Refused(409, "taken"), 409)])
+def test_a_provider_failure_is_a_refusal(monkeypatch, error, status):
+    monkeypatch.setattr(gateway, "log", lambda *parts: None)
+    with pytest.raises(gateway.Refused) as refusal:
+        asyncio.run(gateway.first(gateway.guarded(raising(error))))
+    assert refusal.value.status == status
+
+
+def test_a_model_that_is_not_a_string_is_a_400():
+    with pytest.raises(gateway.Refused) as refusal:
+        gateway.backend({"model": 7})
+    assert refusal.value.status == 400
+
+
+def test_a_failed_reply_asked_for_whole_is_an_http_error(monkeypatch):
+    async def failing(model, body):
+        yield {"type": "response.created", "response": {"status": "in_progress"}}
+        yield {"type": "response.failed", "response": {"status": "failed", "error": {"message": "over quota"}}}
+    monkeypatch.setitem(gateway.PROVIDERS, "openai", failing)
+    monkeypatch.setattr(gateway, "log", lambda *parts: None)
+
+    async def asked():
+        app = web.Application()
+        app.add_routes([web.post("/v1/responses", gateway.responses)])
+        async with test_utils.TestClient(test_utils.TestServer(app)) as client:
+            reply = await client.post("/v1/responses", json={"model": "openai/m", "input": "hi"})
+            return reply.status, await reply.json()
+    status, answer = asyncio.run(asked())
+    assert status == 502 and answer["error"]["message"] == "over quota"

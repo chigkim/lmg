@@ -66,10 +66,11 @@ def born(pid):
         ok = kernel.GetProcessTimes(handle, *map(ctypes.byref, times))
         kernel.CloseHandle(handle)
         return times[0].value if ok else None
-    try:  # Linux: field 22 of /proc/PID/stat, counted after the parenthesised name, which may hold spaces
-        return int(pathlib.Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[19])
-    except (OSError, ValueError, IndexError):
+    try:  # Linux and macOS alike
+        started = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True).stdout
+    except OSError:
         return None
+    return " ".join(started.split()) or None
 
 
 def listening(port):
@@ -90,7 +91,9 @@ def running(port):
         pid = int(pid)
     except (OSError, ValueError):
         return None
-    if alive(pid) and started == str(born(pid)):
+    # A start time that cannot be read is no match: a pid alone may be another process's by now.
+    now = born(pid) if alive(pid) else None
+    if now is not None and started == str(now):
         return pid
     path.unlink(missing_ok=True)
     return None

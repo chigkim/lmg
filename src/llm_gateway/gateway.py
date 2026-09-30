@@ -38,6 +38,8 @@ import sys
 import tempfile
 import time
 import tomllib
+import traceback
+import urllib.parse
 import uuid
 
 import aiohttp
@@ -251,7 +253,9 @@ async def fetched(parts):
         else:
             async with HTTP.get(url) as reply:
                 if reply.status != 200:
-                    raise Refused(400, f"the image at {url} answered {reply.status}")
+                    # The host alone: a signed URL carries its credential in the path or the query.
+                    host = urllib.parse.urlsplit(url).hostname
+                    raise Refused(400, f"an image at {host} answered {reply.status}")
                 media = reply.content_type or "image/png"
                 data = base64.b64encode(await reply.read()).decode()
         out.append({"type": "image", "source": {"type": "base64", "media_type": media, "data": data}})
@@ -683,7 +687,7 @@ class ChatWriter:
             self.finish = "tool_calls" if self.calls else "length" if kind == "response.incomplete" else "stop"
             return [self.chunk({}, self.finish)]
         if kind == "response.failed":
-            raise Refused(502, ((e["response"].get("error") or {}).get("message")) or "the model failed")
+            raise Refused(502, failure_of(e))
         return []
 
     def whole(self):
@@ -699,11 +703,33 @@ class ChatWriter:
 # ---------------------------------------------------------------- HTTP
 
 def backend(body):
-    provider, _, model = (body.get("model") or "").partition("/")
+    named = body.get("model")
+    provider, _, model = (named if isinstance(named, str) else "").partition("/")
     if provider not in PROVIDERS or not model:
-        raise Refused(400, f"the model {body.get('model')!r} names no provider; use "
+        raise Refused(400, f"the model {named!r} names no provider; use "
                            + " or ".join(f"{p}/MODEL" for p in PROVIDERS))
-    return PROVIDERS[provider](model, body)
+    return guarded(PROVIDERS[provider](model, body))
+
+
+async def guarded(events):
+    """EVENTS, with any failure but a refusal made one: a provider that cannot be reached is a 502, and anything
+    else -- a request shaped as no client should send, or a fault here -- a 500 with its traceback in the log, so the
+    client gets an error it can read, or a response.failed event mid-stream, rather than a dropped connection."""
+    try:
+        async for e in events:
+            yield e
+    except Refused:
+        raise
+    except (aiohttp.ClientError, TimeoutError) as e:
+        raise Refused(502, f"the provider could not be reached: {type(e).__name__}")
+    except Exception as e:
+        log("  " + traceback.format_exc().rstrip().replace("\n", "\n  "))
+        raise Refused(500, f"the gateway could not handle this request ({type(e).__name__}); see its log")
+
+
+def failure_of(e):
+    """What a response.failed event says went wrong."""
+    return ((e["response"].get("error") or {}).get("message")) or "the model failed"
 
 
 async def first(events):
@@ -786,6 +812,8 @@ async def responses(request):
             reply = await sse(request)
         async for e in _chain(head, events):
             trace("event", e)
+            if e.get("type") == "response.failed" and not reply:
+                raise Refused(502, failure_of(e))  # a whole reply that failed is an HTTP error, not a 200
             if e.get("type") == "response.output_item.done":
                 done.append(e["item"])
             if e.get("type", "").startswith("response.") and "response" in e:
