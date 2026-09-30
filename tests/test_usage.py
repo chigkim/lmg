@@ -15,8 +15,8 @@ def test_a_window_spent_evenly_is_on_pace():
 def test_a_length_of_time_is_its_two_largest_units():
     assert usage.span(8 * 60) == "8m"
     assert usage.span(20 * 3600) == "20h"
-    assert usage.span(2 * 3600 + 42 * 60) == "2h 42m"
-    assert usage.span(3 * 86400 + 4 * 3600 + 5 * 60) == "3d 4h"
+    assert usage.span(2 * 3600 + 42 * 60) == "2h42m"
+    assert usage.span(3 * 86400 + 4 * 3600 + 5 * 60) == "3d4h"
     assert usage.span(10) == "0m"
 
 

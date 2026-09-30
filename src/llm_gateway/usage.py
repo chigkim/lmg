@@ -86,11 +86,11 @@ def table(headers, rows, text=(0,), notes=None):
 
 
 def span(seconds):
-    """A length of time in its two largest units: 40m, 2h 42m, 3d 4h."""
+    """A length of time in its two largest units: 40m, 2h42m, 3d4h."""
     minutes = max(round(seconds / 60), 0)
     days, hours, minutes = minutes // 1440, minutes // 60 % 24, minutes % 60
     parts = [f"{n}{unit}" for n, unit in ((days, "d"), (hours, "h"), (minutes, "m")) if n]
-    return " ".join(parts[:2]) or "0m"
+    return "".join(parts[:2]) or "0m"
 
 
 WEEK = 7 * 24 * 3600
