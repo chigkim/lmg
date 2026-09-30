@@ -1,3 +1,4 @@
+import pytest
 import csv
 import json
 import time
@@ -105,3 +106,11 @@ def test_every_window_is_one_row_of_one_table_with_a_signed_spare():
     assert body == {"Codex 5h": ["30%", "-20%"], "agy Gemini 5h": ["80%", "+30%"],
                     "agy Claude and GPT 5h": ["100%", "+50%"]}
     assert lines[-1] == "Claude: could not ask: no answer"
+
+
+def test_a_word_that_is_not_a_note_is_refused_before_any_plan_is_asked(monkeypatch):
+    monkeypatch.setattr(usage, "asked", lambda: pytest.fail("asked"))
+    monkeypatch.setattr(usage, "record", lambda note, report: pytest.fail("recorded"))
+    assert usage.main(["plan"]) == 2
+    assert usage.main(["weekly", "pace", "added"]) == 2
+    assert usage.NOTE.match("before: session x") and usage.NOTE.match("reading: pace")

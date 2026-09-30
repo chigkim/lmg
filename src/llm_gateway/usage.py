@@ -329,12 +329,23 @@ def main(argv=None):
     A reading just before a task and one just after it is what the task
     cost, whatever else was spending the same plans in between; `lmg usage pace`
     pairs them.
+
+    A note is `word: what`, so a mistyped form -- `lmg usage calss`, or the old `lmg usage plan` -- is refused
+    rather than written to the ledger as a note.
     """
     note = " ".join(sys.argv[1:] if argv is None else argv)
+    if note and not NOTE.match(note):
+        print(f"lmg usage: {note!r} is not a note or a form of lmg usage. A note is 'word: what',"
+              " as 'before: session x'; the forms are calls, pace and worth.", file=sys.stderr)
+        return 2
     report = asked()
     print("\n".join(shown(report)))
     if note:
         record(note, report)
+
+
+# A ledger note: a word, a colon, and what it is about.
+NOTE = re.compile(r"\w+: \S")
 
 
 def record(note, report):
