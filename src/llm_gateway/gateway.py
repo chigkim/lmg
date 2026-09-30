@@ -369,8 +369,12 @@ class ClaudeSession:
         self.failure = "the Claude session could not start; is `claude` installed and logged in?"
         self.lock = asyncio.Lock()
         server = create_sdk_mcp_server(SERVER, tools=[self._tool(n, d, s) for n, d, s, _ in tools])
+        # The prompt goes in a file: on the command line, one over 32,767 characters (OpenCode's is 51,000)
+        # cannot start the child on Windows, and the SDK reports that as the CLI not being found.
+        self.prompt = PROMPTS / f"system-{uuid.uuid4().hex}.md"
+        self.prompt.write_text(system or "You are a helpful assistant.", encoding="utf-8", newline="")
         options = ClaudeAgentOptions(
-            model=model, system_prompt=system or "You are a helpful assistant.", tools=[],
+            model=model, system_prompt={"type": "file", "path": str(self.prompt)}, tools=[],
             mcp_servers={SERVER: server}, strict_mcp_config=True, allowed_tools=[PREFIX + n for n, *_ in tools],
             setting_sources=[], skills=[], include_partial_messages=True, cwd=WORKDIR, effort=effort, cli_path=CLAUDE,
             env={"MCP_TOOL_TIMEOUT": str(24 * 3600 * 1000), "MAX_MCP_OUTPUT_TOKENS": "200000",
@@ -396,6 +400,7 @@ class ClaudeSession:
             log("  " + self.failure)
             self.events.put_nowait(("error", self.failure))
         finally:
+            self.prompt.unlink(missing_ok=True)
             self.closed = True
             self.ready.set()
             self.events.put_nowait(("error", "the Claude session ended"))
@@ -944,14 +949,18 @@ def claude_exe():
 
 SESSIONS, HTTP, CLAUDE = set(), None, claude_exe()
 WORKDIR = str(pathlib.Path(tempfile.gettempdir()) / "llm-gateway")
+PROMPTS = pathlib.Path(WORKDIR) / "prompts"  # one folder a port once serving, so no gateway sweeps another's
 
 
 def serve(port, config):
     """Serve on 127.0.0.1:port until stopped, with the settings in the config file."""
-    global LOG, LEVEL
+    global LOG, LEVEL, PROMPTS
     LOG, LEVEL = configured(config)
+    PROMPTS = pathlib.Path(WORKDIR) / f"prompts-{port}"
     key = api_key()
-    os.makedirs(WORKDIR, exist_ok=True)
+    os.makedirs(PROMPTS, exist_ok=True)
+    for left in PROMPTS.glob("system-*.md"):  # left by this port's last gateway, which `stop` kills outright
+        left.unlink(missing_ok=True)
     # The Claude side is the subscription or nothing: a key or a base URL in the environment would reroute the child.
     for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
         if os.environ.pop(name, None) is not None:

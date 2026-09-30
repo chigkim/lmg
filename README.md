@@ -123,6 +123,7 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 
 - The Codex token is read from `auth.json` on every request and never refreshed, written, logged or printed. When it expires, run any `codex` command and retry.
 - Claude's login is never touched: the SDK's `claude` child uses its own. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` are dropped from the environment at startup, so the Claude side is the subscription or nothing.
+- The client's system prompt reaches `claude` as a file, `system-ID.md` in `llm-gateway/prompts-PORT` under the temp folder: one a session, so two at once never share one, deleted when the session ends, and swept when the gateway on that port next starts, since `stop` kills it before it can clean up. On the command line, a prompt over 32,767 characters, such as OpenCode's, could not start the child on Windows.
 - On Windows the SDK will not run npm's `claude.cmd` shim, so the gateway uses the `claude.exe` inside the npm package. `CLAUDE_CLI` overrides the path.
 
 ### Limits

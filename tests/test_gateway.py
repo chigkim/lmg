@@ -209,3 +209,36 @@ def test_a_malformed_chat_message_is_refused_as_a_bad_request(monkeypatch):
                      [{"role": "tool", "content": "x"}]):
         status, answer = asyncio.run(asked(messages))
         assert status == 400 and "message" in answer["error"]
+
+
+def test_the_system_prompt_reaches_claude_in_a_file_that_lasts_as_long_as_the_session(monkeypatch, tmp_path):
+    seen = {}  # the prompt file each session's child was given -> what it held when the child started
+
+    class Client:
+        def __init__(self, options):
+            self.path = options.system_prompt["path"]
+
+        async def __aenter__(self):
+            seen[self.path] = open(self.path, encoding="utf-8", newline="").read()
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def receive_messages(self):
+            return
+            yield
+
+    monkeypatch.setattr(gateway, "ClaudeSDKClient", Client)
+    monkeypatch.setattr(gateway, "PROMPTS", tmp_path)
+    monkeypatch.setattr(gateway, "log", lambda *parts: None)
+    long = "x" * 40000 + "\r\nend"  # past Windows' command-line limit, and its line ending kept
+
+    async def sessions():
+        a, b = gateway.ClaudeSession("sonnet", long, [], None), gateway.ClaudeSession("sonnet", "other", [], None)
+        await asyncio.gather(a.task, b.task)
+        return a, b
+
+    a, b = asyncio.run(sessions())
+    assert seen == {str(a.prompt): long, str(b.prompt): "other"}  # two at once, a file each
+    assert list(tmp_path.iterdir()) == []
