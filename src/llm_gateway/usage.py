@@ -328,7 +328,7 @@ FIELDS = ["time", "note"] + [f"{window}_{part}" for window in WINDOWS
 def main(argv=None):
     """Print what is left; with a note, also append a row to the ledger.
 
-        lmg usage "before: session mutation sweep"
+        lmg usage "before: pi mutation sweep"
 
     A reading just before a task and one just after it is what the task
     cost, whatever else was spending the same plans in between; `lmg usage pace`
@@ -343,7 +343,7 @@ def main(argv=None):
         return 0
     if note and not NOTE.match(note):
         print(f"lmg usage: {note!r} is not a note or a form of lmg usage. A note is 'word: what',"
-              " as 'before: session x'; the forms are calls, pace and worth.", file=sys.stderr)
+              " as 'before: pi x'; the forms are calls, pace and worth.", file=sys.stderr)
         return 2
     report = asked()
     print("\n".join(shown(report)))
@@ -355,11 +355,11 @@ HELP = """\
 lmg usage [NOTE]                   every plan's windows: % left, spare against even pace, when each resets
 lmg usage calls [--hours N | --since 'YYYY-MM-DD HH:MM']
                                    every call each plan was spent on, and its public-API dollars
-lmg usage pace [--fresh] [--brief] what each kind of task costs a window, and how many more fit
+lmg usage pace [--fresh] [--brief] what a task on each harness costs a window, and how many more fit
 lmg usage worth                    what each window is worth in public-API dollars
 
 A NOTE is 'word: what'. It also adds the reading to the ledger: 'before: NAME' and 'after: NAME' around a task
-are what lmg usage pace pairs, and NAME's first word is the task's kind. Each form takes --help."""
+are what lmg usage pace pairs, and NAME's first word is the harness that ran it. Each form takes --help."""
 
 
 # A ledger note: a word, a colon, and what it is about.

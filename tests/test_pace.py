@@ -21,15 +21,15 @@ def test_a_task_costs_what_its_own_two_readings_lost():
 
 
 def test_an_overlap_on_the_same_plan_is_shared(monkeypatch):
-    monkeypatch.setattr(pace, "SPENDS", {"codex": "codex", "review": "codex", "agy": "agy"})
+    monkeypatch.setattr(pace, "SPENDS", {"codex": "codex", "agy": "agy"})
     rows = [row("2026-09-27 10:00", "before: codex a", codex_week=80),
-            row("2026-09-27 10:10", "before: review b", codex_week=80),
+            row("2026-09-27 10:10", "before: codex review b", codex_week=80),
             row("2026-09-27 10:10", "before: agy c", agy_week=50),
             row("2026-09-27 10:20", "after: codex a", codex_week=79),
-            row("2026-09-27 10:30", "after: review b", codex_week=78),
+            row("2026-09-27 10:30", "after: codex review b", codex_week=78),
             row("2026-09-27 10:40", "after: agy c", agy_week=49)]
     assert {name: shared for name, _, _, shared in pace.tasks(rows)} == {
-        "codex a": True, "review b": True, "agy c": False}
+        "codex a": True, "codex review b": True, "agy c": False}
 
 
 def test_typical_drops_the_dearest_once_there_are_five():
@@ -68,10 +68,10 @@ def test_a_ledger_time_is_read_to_the_second_or_to_the_minute():
     assert pace.moment("2026-09-28 09:59").minute == 59
 
 
-def test_a_task_named_nothing_has_no_kind_and_does_not_stop_pace():
+def test_a_task_named_nothing_has_no_harness_and_does_not_stop_pace():
     rows = [row("2026-09-27 10:00", "before: ", codex_week=80), row("2026-09-27 10:30", "after: ", codex_week=79)]
     [(name, _, _, _)] = pace.tasks(rows)
-    assert (pace.kind_of(name), pace.plan(name)) == ("", None)
+    assert (pace.harness_of(name), pace.plan(name)) == ("", None)
 
 
 def test_standing_signs_the_spare():
@@ -84,8 +84,8 @@ def test_standing_signs_the_spare():
 
 def test_a_task_starting_on_a_window_not_yet_started_costs_its_fall():
     # The before reading made up a reset of five hours on; the task's first call set the real one twenty minutes later.
-    before = row("2026-09-27 10:00:00", "before: session x", claude_5h=100)
-    after = row("2026-09-27 10:40:00", "after: session x", claude_5h=93)
+    before = row("2026-09-27 10:00:00", "before: pi x", claude_5h=100)
+    after = row("2026-09-27 10:40:00", "after: pi x", claude_5h=93)
     before["claude_5h_reset"], after["claude_5h_reset"] = "2026-09-27 15:00:00", "2026-09-27 15:20:00"
     [(_, _, used, _)] = pace.tasks([before, after])
     assert used == {"claude_5h": 7}

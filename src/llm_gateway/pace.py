@@ -6,23 +6,24 @@
 
 A task is a `before: NAME` row and the next `after: NAME` row in the ledger,
 written by `lmg usage "before: NAME"` and `lmg usage "after: NAME"` around it.
-The first word of NAME is the task's kind, and `pace.toml` beside the ledger
-names the one window each kind is paced on:
+The first word of NAME is the harness that ran the task -- `lmg ask` writes
+`agy`, `claude` or `codex`, a review included -- and `pace.toml` beside the
+ledger names the one window each harness is paced on:
 
     [paced]
-    session = "claude_5h"    # `before: session x` spends Claude, paced on its 5-hour window
-    codex = "codex_week"     # an `lmg ask codex` job
+    pi = "claude_5h"         # `before: pi x`: a Pi session on Claude, paced on its 5-hour window
+    codex = "codex_week"
     agy = "agy_week"
 
 A window is a plan and a length, `claude`, `codex` or `agy` and `5h` or
-`week`, and the plan is what the kind spends. Without the file every task is
-still listed, but no kind is costed or paced.
+`week`, and the plan is what the harness spends. Without the file every task
+is still listed, but no harness is costed or paced.
 
 A task's cost is only what its windows lost between its own two readings --
 never the drift between other rows, since another session may be spending
 the same plans -- and a window that rose instead was reset during the task
 and is left out rather than counted as a gain. Spending elsewhere can still
-fall inside a task's own two readings, so the cost of a kind leaves out its
+fall inside a task's own two readings, so the cost on a harness leaves out its
 dearest task (`typical`); a task another task here overlapped is marked
 `shared` and left out, since the two cannot be told apart.
 
@@ -30,8 +31,8 @@ Pace is even spending: a window with a quarter of its length left to run is
 on pace with a quarter of it left, which over a 5-hour window is 10% a half
 hour. What a window has
 beyond its even line is its spare, and the jobs that fit are that spare over
-what one job of that kind costs there. A weekly window reads in whole points
-and one job rarely moves it, so a kind whose jobs have not yet moved it is
+what one job on that harness costs there. A weekly window reads in whole points
+and one job rarely moves it, so a harness whose jobs have not yet moved it is
 given the one bound it allows: each cost under the meter's 1%, so at least
 spare more fit.
 """
@@ -49,23 +50,23 @@ RECENT = 10
 
 
 def paced(path=usage.DATA / "pace.toml"):
-    """{kind: window} out of pace.toml, or nothing when there is none."""
+    """{harness: window} out of pace.toml, or nothing when there is none."""
     if not path.exists():
         return {}
     try:
         with path.open("rb") as handle:
-            kinds = tomllib.load(handle).get("paced", {})
+            harnesses = tomllib.load(handle).get("paced", {})
     except tomllib.TOMLDecodeError as problem:
         raise SystemExit(f"{path}: {problem}")
-    for kind, window in kinds.items():
+    for harness, window in harnesses.items():
         if window not in WINDOWS:
-            raise SystemExit(f"{path}: {kind} = {window!r} is not one of {', '.join(WINDOWS)}")
-    return kinds
+            raise SystemExit(f"{path}: {harness} = {window!r} is not one of {', '.join(WINDOWS)}")
+    return harnesses
 
 
 PACED = paced()
-# The plan each kind of task spends: the plan of the window it is paced on.
-SPENDS = {kind: window.split("_")[0] for kind, window in PACED.items()}
+# The plan each harness spends: the plan of the window it is paced on.
+SPENDS = {harness: window.split("_")[0] for harness, window in PACED.items()}
 
 
 def moment(text):
@@ -85,10 +86,10 @@ def tasks(rows):
     another plan and leaves the codex job's figure its own."""
     open_, paired = {}, []
     for row in rows:
-        kind, _, name = row["note"].partition(": ")
-        if kind == "before":
+        side, _, name = row["note"].partition(": ")
+        if side == "before":
             open_[name] = row
-        elif kind == "after" and name in open_:
+        elif side == "after" and name in open_:
             before = open_.pop(name)
             used = {}
             for window in WINDOWS:
@@ -113,20 +114,20 @@ def same_window(before, after, window):
     return not (was and now) or abs((moment(now) - moment(was)).total_seconds()) <= 600
 
 
-def kind_of(name):
-    """A task's kind, the first word of its name; '' for a task named nothing."""
+def harness_of(name):
+    """The harness that ran a task, the first word of its name; '' for a task named nothing."""
     return (name.split() or [""])[0]
 
 
 def plan(name):
-    return SPENDS.get(kind_of(name))
+    return SPENDS.get(harness_of(name))
 
 
 def typical(points):
-    """What one task of a kind costs a window: the mean of its last `RECENT`,
+    """What one task on a harness costs a window: the mean of its last `RECENT`,
     less the dearest when there are enough to spare it. A mean, because a
     window reads in whole points and most tasks move it by nought or one, so
-    a median says nought for a kind that plainly spends; the dearest dropped,
+    a median says nought for a harness that plainly spends; the dearest dropped,
     because spending from another session inside a task's own two readings
     only ever adds."""
     recent = sorted(points[-RECENT:])
@@ -175,7 +176,7 @@ def main(argv=None):
         rows = list(csv.DictReader(book))
     done = tasks(rows)
     if not PACED:
-        print(f"no {usage.DATA / 'pace.toml'}, so no kind of task is costed or paced\n")
+        print(f"no {usage.DATA / 'pace.toml'}, so no harness is costed or paced\n")
     if not args.brief:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
@@ -191,21 +192,21 @@ def main(argv=None):
         print()
 
     costs = {}
-    for kind, plan in SPENDS.items():
+    for harness, plan in SPENDS.items():
         spent = [used for name, _, used, shared in done
-                 if kind_of(name) == kind and not shared]
-        costs[kind] = (len(spent), {w.split("_")[1]: typical([u[w] for u in spent if w in u])
+                 if harness_of(name) == harness and not shared]
+        costs[harness] = (len(spent), {w.split("_")[1]: typical([u[w] for u in spent if w in u])
                                     for w in WINDOWS
                                     if w.startswith(plan) and any(w in u for u in spent)})
     if costs:
-        print("what one task of each kind costs")
+        print("what one task on each harness costs")
         show(usage.table(
-            ["kind", "plan", "tasks measured", "5h window cost", "week window cost"],
-            [[kind, SPENDS[kind], alone] + [percent(c[k]) if k in c else "-" for k in LENGTH]
-             for kind, (alone, c) in costs.items()], text=(0, 1),
-            notes={"kind": "the first word of a task's name",
-                   "plan": "the plan this kind spends, from pace.toml",
-                   "tasks measured": "tasks of this kind that ran without overlap",
+            ["harness", "plan", "tasks measured", "5h window cost", "week window cost"],
+            [[harness, SPENDS[harness], alone] + [percent(c[k]) if k in c else "-" for k in LENGTH]
+             for harness, (alone, c) in costs.items()], text=(0, 1),
+            notes={"harness": "what ran the task: the first word of its name",
+                   "plan": "the plan this harness spends, from pace.toml",
+                   "tasks measured": "tasks on this harness that ran without overlap",
                    "5h window cost, week window cost": "typical % of that window one task takes: the mean, less"
                                                         " the dearest task once there are five"}))
 
@@ -218,31 +219,31 @@ def main(argv=None):
     print(f"\npaced on the reading at {latest['time']} ({latest['note']}); lmg usage shows the windows now\n")
     stand = standing(latest)
     fits = []
-    for kind, window in PACED.items():
+    for harness, window in PACED.items():
         seen = [used[window] for name, _, used, shared in done
-                if kind_of(name) == kind and not shared and window in used]
+                if harness_of(name) == harness and not shared and window in used]
         if window not in stand:
-            fits.append([kind, window, "-", "no reading", "-", "-"])
+            fits.append([harness, window, "-", "no reading", "-", "-"])
             continue
         spare = max(stand[window][2], 0)
         if not seen:
-            fits.append([kind, window, "-", "no task yet", "-", 0])
+            fits.append([harness, window, "-", "no task yet", "-", 0])
         elif typical(seen):
             # The same typical cost the table above gives, the dearest task left out.
             cost = typical(seen)
-            fits.append([kind, window, f"{cost:.2f}%", f"{whole(spare / cost)}", every(window, cost), len(seen)])
+            fits.append([harness, window, f"{cost:.2f}%", f"{whole(spare / cost)}", every(window, cost), len(seen)])
         else:
             # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
             # fallen in a window of its own, so the one bound they give is 1% a task.
-            fits.append([kind, window, "under 1%", f"at least {spare}", f"{every(window, 1)} at most", len(seen)])
+            fits.append([harness, window, "under 1%", f"at least {spare}", f"{every(window, 1)} at most", len(seen)])
     print("how many more tasks fit without falling behind pace")
     show(usage.table(
-        ["kind", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"], fits, text=(0, 1),
-        notes={"paced on": "the one window pace.toml names for this kind",
+        ["harness", "paced on", "cost per task", "fit now", "then one more every", "tasks measured"], fits, text=(0, 1),
+        notes={"paced on": "the one window pace.toml names for this harness",
                "cost per task": "typical % of that window one task takes, as in the table above",
                "fit now": "tasks that can run now before the window falls behind even pace",
                "then one more every": "how often one more fits after that, as the window's pace catches up",
-               "tasks measured": "tasks of this kind measured on that window"}))
+               "tasks measured": "tasks on this harness measured on that window"}))
 
 
 def show(lines):

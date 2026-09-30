@@ -6,9 +6,9 @@ One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed
 | --- | --- |
 | `lmg proxy [run\|start\|stop\|restart\|status]` | The gateway. It speaks OpenAI's Responses and Chat Completions APIs, and answers them from a Claude or ChatGPT subscription instead of an API key. |
 | `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
-| `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), and when each resets. With a note, `word: what` such as `"before: session x"`, it also adds a row to the ledger, which keeps agy's Gemini group only. Any other word is refused, so a mistyped form writes nothing. `lmg usage --help` lists every form, and each form takes `--help` too. |
+| `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), and when each resets. With a note, `word: what` such as `"before: pi x"`, it also adds a row to the ledger, which keeps agy's Gemini group only. Any other word is refused, so a mistyped form writes nothing. `lmg usage --help` lists every form, and each form takes `--help` too. |
 | `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it (`claude code`, `claude -p` and `pi bridge` for Claude; `codex` and `codex exec` for Codex), with tokens and what they would cost on the public API. |
-| `lmg usage pace [--fresh] [--brief]` | What each kind of task costs a window, from paired `before:` and `after:` rows in the ledger, and how many more fit, paced on the ledger's latest reading. The windows themselves are `lmg usage`'s. |
+| `lmg usage pace [--fresh] [--brief]` | What a task on each harness costs a window, from paired `before:` and `after:` rows in the ledger, and how many more fit, paced on the ledger's latest reading. The windows themselves are `lmg usage`'s. |
 | `lmg usage worth` | What each window is worth in dollars, sized from the ledger and the clients' records, and how much of it is spent. It takes no options but `--help`, and it is slower than the rest (about 9 seconds), since it reads every record back to a week before the ledger's first row. |
 
 Three things run a model: `lmg proxy`, every form of `lmg ask` but `clean` and `list` (`review` included), and the Haiku fallback of `lmg usage` described below. `lmg usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored; a redirect is refused rather than followed, because following it would send the token on. When that request cannot be made or fails -- an expired token, no credentials file, no network, an error status, a broken reply or one of another shape -- it falls back to a one-word Haiku call, which costs a little and refreshes the login.
@@ -45,11 +45,11 @@ lmg:
       --timeout T:                   # agy's print timeout; default 3600s
       --force:                       # clean only: remove it even with unmerged work
   usage:                             # every window in one table: percent left, spare, resets
-    NOTE:                            # optional: also add a ledger row; "word: what", e.g. "before: session x"
+    NOTE:                            # optional: also add a ledger row; "word: what", e.g. "before: pi x"
     calls:                           # every call each plan was spent on, and its API cost
       --hours N:                     # default 5
       --since "YYYY-MM-DD HH:MM":    # local time; overrides --hours
-    pace:                            # what each kind of task costs, and how many more fit
+    pace:                            # what a task on each harness costs, and how many more fit
       --fresh:                       # take a reading first
       --brief:                       # costs and room, no task table
     worth:                           # each window's size and use, in dollars
@@ -230,22 +230,21 @@ Spare is what is left less what would be left had the window been spent evenly o
 `lmg ask` takes its own readings. For a task of your own, take a reading before it and one after, each under the task's name:
 
 ```bash
-lmg usage "before: session design review"
+lmg usage "before: pi design review"
 # ... the task ...
-lmg usage "after: session design review"
+lmg usage "after: pi design review"
 ```
 
 A note is a word, a colon and what it is about; `before:` and `after:` are the two `lmg usage pace` pairs, and `lmg usage pace --fresh` writes `reading: pace`. Both rows go to `src/llm_gateway/usage-ledger.csv`. A task's cost is only what its windows lost between its own two readings, so other spending before or after it does not count. A window that went up was reset during the task, so it is left out rather than counted as a gain.
 
-`lmg usage pace` groups tasks by the first word of their name, so an `lmg ask` job is of the kind `agy`, `claude` or `codex`. `src/llm_gateway/pace.toml` says which window each kind is paced on, and the plan in that window's name is the one the kind spends:
+`lmg usage pace` groups tasks by the harness that ran them, the first word of their name. An `lmg ask` job is `agy`, `claude` or `codex`, and a review is `codex review SHA`, so it counts as Codex. For a task of your own, name the harness you are working in, such as `pi`. `src/llm_gateway/pace.toml` says which window each harness is paced on, and the plan in that window's name is the one the harness spends:
 
 ```toml
 [paced]
-session = "claude_5h"
+pi = "claude_5h"
 agy = "agy_week"
 claude = "claude_5h"
 codex = "codex_week"
-review = "codex_week"
 ```
 
 A window is `claude`, `codex` or `agy`, then `_5h` or `_week`. Without the file, `lmg usage pace` still lists every task but costs and paces none.

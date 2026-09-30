@@ -34,7 +34,7 @@ holds the id, and `list` finds it there. A follow-up is a new prompt file of the
 id, and may change mode.
 
 A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME [pid N]` and `after: ...`, so the
-harness is the kind `lmg usage pace` costs. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
+harness is what `lmg usage pace` costs it under; a review's note is `codex review SHA`. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
 cache reads, cache writes and output, which add up to what the model read and wrote, and what they would cost on
 the public API at the rates in `prices.csv`. All three sit beside this file.
 """
@@ -501,7 +501,7 @@ def review(sha, repo, home, model):
     while (runs / f"review-{sha}-{n}.jsonl").exists():
         n += 1
     answer, raw, log = (runs / f"review-{sha}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
-    note = f"review {sha}" + paired()
+    note = f"codex review {sha}" + paired()
     reading("before", note)
     started = time.time()
     status = run(["codex", "exec", "-m", model, "-s", "read-only", "-o", str(answer), "review",

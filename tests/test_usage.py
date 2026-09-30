@@ -117,7 +117,7 @@ def test_a_word_that_is_not_a_note_is_refused_before_any_plan_is_asked(monkeypat
     monkeypatch.setattr(usage, "record", lambda note, report: pytest.fail("recorded"))
     assert usage.main(["plan"]) == 2
     assert usage.main(["weekly", "pace", "added"]) == 2
-    assert usage.NOTE.match("before: session x") and usage.NOTE.match("reading: pace")
+    assert usage.NOTE.match("before: pi x") and usage.NOTE.match("reading: pace")
 
 
 class Server:
