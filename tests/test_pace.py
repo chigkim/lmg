@@ -74,13 +74,9 @@ def test_a_task_named_nothing_has_no_kind_and_does_not_stop_pace():
     assert (pace.kind_of(name), pace.plan(name)) == ("", None)
 
 
-def test_standing_signs_the_spare_and_says_when_each_window_resets():
+def test_standing_signs_the_spare():
     reading = row("2020-01-01 10:00:00", "reading", codex_5h=30, codex_week=60)
     reading["codex_5h_reset"] = "2020-01-01 12:30"
     reading["codex_week_reset"] = "2020-01-04 10:00"
-    stand = pace.standing(reading)
     # Half the 5h window to run and 30% left is behind pace; three days of seven and 60% left is ahead.
-    assert stand["codex_5h"][:3] == (30, 50, -20)
-    assert stand["codex_week"][:3] == (60, 43, 17)
-    assert stand["codex_5h"][3] == "12:30 PM on 01 Jan, in 2h 30m"
-    assert stand["codex_week"][3] == "10:00 AM on 04 Jan, in 3d"
+    assert pace.standing(reading) == {"codex_5h": (30, 50, -20), "codex_week": (60, 43, 17)}

@@ -135,8 +135,7 @@ def every(window, cost):
 
 
 def standing(row):
-    """{window: (left, even, spare, resets)} for each window the row has a reset for: `resets` says when, and how
-    long after the reading, as `lmg usage` does."""
+    """{window: (left, even, spare)} for each window the row has a reset for."""
     taken = moment(row["time"])
     out = {}
     for window in WINDOWS:
@@ -145,8 +144,7 @@ def standing(row):
             length = LENGTH[window.split("_")[1]]
             to_run = min(max((moment(reset) - taken).total_seconds(), 0), length)
             even = round(100 * to_run / length)
-            resets = f"{usage.when(moment(reset).timestamp())}, in {usage.span(to_run)}"
-            out[window] = (int(left), even, int(left) - even, resets)
+            out[window] = (int(left), even, int(left) - even)
     return out
 
 
@@ -205,17 +203,9 @@ def main(argv=None):
     if latest is None:
         print("\nno reading with reset times yet; run with --fresh")
         return
-    print(f"\nstanding at {latest['time']} ({latest['note']})")
+    # The windows themselves are `lmg usage`'s table; this one only needs how far ahead of pace each stood.
+    print(f"\npaced on the reading at {latest['time']} ({latest['note']}); lmg usage shows the windows now\n")
     stand = standing(latest)
-    show(usage.table(
-        ["window", "left", "spare", "resets"],
-        [[window, percent(left), f"{spare:+}%", resets] for window, (left, _, spare, resets) in stand.items()],
-        text=(0, 3),
-        notes={"left": "% of the window left at that reading",
-               "spare": "left less what would be left if the window were spent evenly over its length: +5% is"
-                        " ahead of pace, -5% behind it",
-               "resets": "when the window starts again, and how long after the reading"}))
-    print()
     fits = []
     for kind, window in PACED.items():
         seen = [used[window] for name, _, used, shared in done

@@ -98,7 +98,11 @@ FIVE_HOURS = 5 * 3600
 
 
 class Window(str):
-    """A printed window line that keeps its figures for the ledger."""
+    """A printed window line that keeps its figures for the ledger and the table."""
+
+
+class Group(str):
+    """The line naming one of a plan's model groups, as agy has two, above that group's windows."""
 
 
 def line(label, used, resets, indent="  "):
@@ -115,7 +119,7 @@ def line(label, used, resets, indent="  "):
     text += (f"; even pace {even}%, " + (
         f"{margin}% to spare" if margin >= 0 else f"{-margin}% over pace"))
     window = Window(text)
-    window.left, window.resets = left, resets
+    window.left, window.resets, window.spare = left, resets, margin
     window.kind = "week" if label.startswith("Weekly") else "5h"
     return window
 
@@ -279,7 +283,7 @@ def agy():
             current = {"label": value}
             limits.append(current)
         elif name == "displayName" and limits:
-            shown = []
+            readings = []
             for limit in sorted(limits, key=lambda l: l["label"] != "Five "
                                 "Hour Limit Remaining"):
                 if "reset" not in limit:
@@ -290,9 +294,9 @@ def agy():
                 limit.setdefault("fraction", 0.0)
                 label = ("5h limit:" if limit["label"].startswith("Five")
                          else "Weekly limit:")
-                shown.append(line(label, 100 - limit["fraction"] * 100,
+                readings.append(line(label, 100 - limit["fraction"] * 100,
                                   limit["reset"], indent="    "))
-            groups[value] = shown
+            groups[value] = readings
             limits, current = [], {}
         elif name == "remainingFraction" and current:
             current["fraction"] = float(value)
@@ -300,8 +304,8 @@ def agy():
             current["reset"] = datetime.fromisoformat(
                 value.replace("Z", "+00:00")).timestamp()
     out = []
-    for group, shown in groups.items():
-        out += [f"  {group}"] + shown
+    for group, readings in groups.items():
+        out += [Group(f"  {group}")] + readings
     return out or ["  no quota in the agy log"]
 
 
@@ -328,7 +332,7 @@ def main(argv=None):
     """
     note = " ".join(sys.argv[1:] if argv is None else argv)
     report = asked()
-    print("\n".join(report))
+    print("\n".join(shown(report)))
     if note:
         record(note, report)
 
@@ -400,6 +404,26 @@ def asked():
             except Exception as problem:
                 report.append(f"  could not ask: {problem}")
     return report
+
+
+def shown(report):
+    """The report as its time, one table of every window it read, and anything that could not be read under it.
+
+    A window is named for its plan, its model group if the plan has more than one, and its length: `agy Gemini
+    5h`. Spare is signed, + ahead of an even pace and - behind it."""
+    rows, said, plan, group = [], [], "", ""
+    for row in report[1:]:
+        if not row.startswith(" "):
+            plan, group = row, ""
+        elif isinstance(row, Group):
+            group = row.strip().removesuffix(" Models").removesuffix(" models")
+        elif isinstance(row, Window):
+            rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%",
+                         f"{when(row.resets)}, in {span(row.resets - time.time())}"])
+        else:
+            said.append(f"{plan}: {row.strip()}")
+    table_lines = table(["window", "left", "spare", "resets"], rows, text=(0, 3)) if rows else []
+    return [report[0], ""] + table_lines + ([""] + said if said else [])
 
 
 def windows(report):

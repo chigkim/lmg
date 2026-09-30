@@ -89,3 +89,19 @@ def test_a_claude_window_this_does_not_name_is_left_out_not_read_as_a_group(monk
     monkeypatch.setattr(usage, "ran", lambda argv, timeout, cwd: (0, json.dumps(event)))
     lines = usage._claude_by_call()
     assert [line.split(":")[0].strip() for line in lines] == ["5h limit", "Weekly limit"]
+
+
+def test_every_window_is_one_row_of_one_table_with_a_signed_spare():
+    soon = time.time() + usage.FIVE_HOURS * 0.5
+    report = ["Now 6:00 AM on 30 Sep", "Codex", usage.line("5h limit:", 70, soon),
+              "agy", usage.Group("  Gemini Models"), usage.line("5h limit:", 20, soon, indent="    "),
+              usage.Group("  Claude and GPT models"), usage.line("5h limit:", 0, soon, indent="    "),
+              "Claude", "  could not ask: no answer"]
+    lines = usage.shown(report)
+    assert lines[:2] == ["Now 6:00 AM on 30 Sep", ""]
+    assert [cell.strip() for cell in lines[2].split("|")[1:-1]] == ["window", "left", "spare", "resets"]
+    body = {line.split("|")[1].strip(): [cell.strip() for cell in line.split("|")[2:4]] for line in lines[4:7]}
+    # Half the window to run: 30% left is 20% behind, 80% left is 30% ahead, and agy's two groups are told apart.
+    assert body == {"Codex 5h": ["30%", "-20%"], "agy Gemini 5h": ["80%", "+30%"],
+                    "agy Claude and GPT 5h": ["100%", "+50%"]}
+    assert lines[-1] == "Claude: could not ask: no answer"

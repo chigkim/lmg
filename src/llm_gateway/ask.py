@@ -625,7 +625,7 @@ def main(argv, command_line=False):
         return 2
     print(f"exit {status}")
     try:
-        print("\n".join(reading("after", note)))
+        print("\n".join(usage.shown(reading("after", note))))
         print()
         sys.stdout.flush()
         pace.main(["--brief"])
