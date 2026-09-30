@@ -41,15 +41,16 @@ def test_a_harness_named_for_a_plan_spends_it_and_another_spends_what_its_tasks_
                         ("new c", {})]) == {"codex": "codex", "pi": "claude", "new": None}
 
 
-def test_a_harness_is_paced_on_the_window_that_fits_fewest():
+def test_a_harness_runs_as_many_tasks_as_its_tightest_window_allows():
     done = [("codex a", 10, {"codex_5h": 2, "codex_week": 1}, False)]
-    # 5h: 40 spare at 2% a task fits 20; week: 10 spare at 1% fits 10, so the week binds.
-    stand = {"codex_5h": (90, 50, 40), "codex_week": (60, 50, 10)}
-    assert pace.fit("codex", "codex", done, stand)[2:5] == ["codex_week", "1.00%", "10"]
-    stand["codex_5h"] = (60, 50, 10)
-    assert pace.fit("codex", "codex", done, stand)[2:5] == ["codex_5h", "2.00%", "5"]
-    assert pace.fit("codex", "codex", [], stand)[4] == "no task yet"
-    assert pace.fit("codex", "codex", done, {})[4] == "no reading"
+    now = pace.moment("2026-09-30 10:00")
+    # 5h: 60 left at 2% a task runs 30; week: 20 left at 1% runs 20, so the week runs out first.
+    stand = {"codex_5h": (60, pace.moment("2026-09-30 12:00")), "codex_week": (20, pace.moment("2026-10-02 10:00"))}
+    assert pace.fit("codex", "codex", done, stand, now) == ["codex", "codex", "codex_week", "1%", "20%", 20, "2d", 1]
+    stand["codex_5h"] = (30, pace.moment("2026-09-30 12:00"))
+    assert pace.fit("codex", "codex", done, stand, now)[2:7] == ["codex_5h", "2%", "30%", 15, "2h"]
+    assert pace.fit("codex", "codex", [], stand, now)[5] == "no task yet"
+    assert pace.fit("codex", "codex", done, {}, now)[5] == "no reading"
 
 
 def test_a_reset_during_a_task_is_no_cost():
@@ -75,12 +76,12 @@ def test_a_task_named_nothing_has_no_harness_and_does_not_stop_pace():
     assert pace.harness_of(name) == "" and pace.spends([(name, used)]) == {}
 
 
-def test_standing_signs_the_spare():
-    reading = row("2020-01-01 10:00:00", "reading", codex_5h=30, codex_week=60)
+def test_standing_is_what_each_window_has_left_and_when_it_resets():
+    reading = row("2020-01-01 10:00:00", "reading", codex_5h=30, codex_week=60, agy_week=5)
     reading["codex_5h_reset"] = "2020-01-01 12:30"
     reading["codex_week_reset"] = "2020-01-04 10:00"
-    # Half the 5h window to run and 30% left is behind pace; three days of seven and 60% left is ahead.
-    assert pace.standing(reading) == {"codex_5h": (30, 50, -20), "codex_week": (60, 43, 17)}
+    assert pace.standing(reading) == {"codex_5h": (30, pace.moment("2020-01-01 12:30")),
+                                      "codex_week": (60, pace.moment("2020-01-04 10:00"))}
 
 
 def test_a_task_starting_on_a_window_not_yet_started_costs_its_fall():

@@ -8,7 +8,7 @@ One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed
 | `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
 | `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), and when each resets. With a note, `word: what` such as `"before: pi x"`, it also adds a row to the ledger, which keeps agy's Gemini group only. Any other word is refused, so a mistyped form writes nothing. `lmg usage --help` lists every form, and each form takes `--help` too. |
 | `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it (`claude code`, `claude -p` and `pi bridge` for Claude; `codex` and `codex exec` for Codex), with tokens and what they would cost on the public API. |
-| `lmg usage pace [--tasks]` | What can run now: one row a harness, with what one task costs the window that runs out first, how many more fit before it falls behind even pace, and how often one more fits after that. It takes a fresh reading unless the ledger's last is under a minute old. `--tasks` adds every task the costs are measured from. |
+| `lmg usage pace [--tasks]` | How many more tasks each harness can run: one row a harness, with what a task costs on average, what the window that runs out first has left, how many tasks that is, and when it resets. It takes a fresh reading unless the ledger's last is under a minute old. `--tasks` adds every task the costs are measured from. |
 | `lmg usage worth` | What each window is worth in dollars, sized from the ledger and the clients' records, and how much of it is spent. It takes no options but `--help`, and it is slower than the rest (about 9 seconds), since it reads every record back to a week before the ledger's first row. |
 
 Three things run a model: `lmg proxy`, every form of `lmg ask` but `clean` and `list` (`review` included), and the Haiku fallback of `lmg usage` described below. `lmg usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored; a redirect is refused rather than followed, because following it would send the token on. When that request cannot be made or fails -- an expired token, no credentials file, no network, an error status, a broken reply or one of another shape -- it falls back to a one-word Haiku call, which costs a little and refreshes the login.
@@ -49,9 +49,8 @@ lmg:
     calls:                           # every call each plan was spent on, and its API cost
       --hours N:                     # default 5
       --since "YYYY-MM-DD HH:MM":    # local time; overrides --hours
-    pace:                            # what can run now: how many more tasks each harness fits
-      --fresh:                       # take a reading first
-      --brief:                       # costs and room, no task table
+    pace:                            # how many more tasks each harness can run
+      --tasks:                       # and every task the costs are measured from
     worth:                           # each window's size and use, in dollars
 ```
 
@@ -237,7 +236,7 @@ lmg usage "after: pi design review"
 
 A note is a word, a colon and what it is about; `before:` and `after:` are the two `lmg usage pace` pairs, and `lmg usage pace` writes `reading: pace` when it takes its own. Both rows go to `src/llm_gateway/usage-ledger.csv`. A task's cost is only what its windows lost between its own two readings, so other spending before or after it does not count. A window that went up was reset during the task, so it is left out rather than counted as a gain.
 
-`lmg usage pace` groups tasks by the harness that ran them, the first word of their name. An `lmg ask` job is `agy`, `claude` or `codex`, and a review is `codex review SHA`, so it counts as Codex. For a task of your own, name the harness you are working in, such as `pi`. Nothing needs setting up. A harness named for a plan spends that plan; any other, such as `pi`, spends the plan its tasks took the most points from, so it is costed once one of its tasks has moved a window, and it would be counted wrongly only if it spent more than one plan. Each harness is paced on whichever window of its plan, 5-hour or weekly, fits the fewest more tasks, which is the one that runs out first. Any name other than `agy`, `claude` or `codex` needs three tasks before it gets a row, so a one-off note is listed under the table as left out, and a cost from fewer than five tasks is marked rough.
+`lmg usage pace` groups tasks by the harness that ran them, the first word of their name. An `lmg ask` job is `agy`, `claude` or `codex`, and a review is `codex review SHA`, so it counts as Codex. For a task of your own, name the harness you are working in, such as `pi`. Nothing needs setting up. A harness named for a plan spends that plan; any other, such as `pi`, spends the plan its tasks took the most points from, so it is costed once one of its tasks has moved a window, and it would be counted wrongly only if it spent more than one plan. A harness can run as many tasks as the window of its plan, 5-hour or weekly, that runs out first: what it has left over what a task costs it on average. Any name other than `agy`, `claude` or `codex` needs three tasks before it gets a row, so a one-off note is listed under the table as left out, and a cost from fewer than five tasks is marked rough.
 
 The two ledgers are gitignored: they are your records, not the tool's.
 
