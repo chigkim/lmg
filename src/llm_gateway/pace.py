@@ -152,7 +152,7 @@ def main(argv=None):
     fits = [row for harness in PLANS for row in fit(harness, done, stand)]
     print(f"how many more tasks each harness can run, on the reading at {latest['time']}")
     notes = {"harness": "what ran the task: the first word of its name",
-             "window": "each window of the harness's plan the reading has: 5-hour and weekly",
+             "window": "5h or week, each window of the harness's plan the reading has",
              "average cost": "% of that window one task takes: the mean of the last ten, less the dearest once"
                              " there are five",
              "left": "% of that window left now",
@@ -196,15 +196,15 @@ def fit(harness, done, stand, now=None):
         left, reset = stand[window]
         resets = usage.span((reset - now).total_seconds())
         if not seen:
-            rows.append([harness, window, "-", f"{left}%", "no task yet", resets, 0])
+            rows.append([harness, window.split("_")[1], "-", f"{left}%", "no task yet", resets, 0])
         elif typical(seen):
             cost = typical(seen)
             runs = whole(left / cost)
-            rows.append([harness, window, percent(cost), f"{left}%", runs, resets, len(seen)])
+            rows.append([harness, window.split("_")[1], percent(cost), f"{left}%", runs, resets, len(seen)])
         else:
             # Every task moved it 0%, so each cost under the meter's 1%. Not 1% over all of them: they may each have
             # fallen in a window of its own, so the one bound they give is 1% a task.
-            rows.append([harness, window, "under 1%", f"{left}%", f"at least {left}", resets, len(seen)])
+            rows.append([harness, window.split("_")[1], "under 1%", f"{left}%", f"at least {left}", resets, len(seen)])
     return rows or [[harness, "-", "-", "-", "no reading", "-", 0]]
 
 

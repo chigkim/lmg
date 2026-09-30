@@ -46,8 +46,8 @@ def test_a_harness_has_a_row_for_each_window_of_its_plan():
     now = pace.moment("2026-09-30 10:00")
     # 5h: 60 left at 2% a task runs 30; week: 20 left at 1% runs 20.
     stand = {"codex_5h": (60, pace.moment("2026-09-30 12:00")), "codex_week": (20, pace.moment("2026-10-02 10:00"))}
-    assert pace.fit("codex", done, stand, now) == [["codex", "codex_5h", "2%", "60%", 30, "2h", 1],
-                                                   ["codex", "codex_week", "1%", "20%", 20, "2d", 1]]
+    assert pace.fit("codex", done, stand, now) == [["codex", "5h", "2%", "60%", 30, "2h", 1],
+                                                   ["codex", "week", "1%", "20%", 20, "2d", 1]]
     assert [row[4] for row in pace.fit("codex", [], stand, now)] == ["no task yet", "no task yet"]
     assert pace.fit("codex", done, {}, now)[0][4] == "no reading"
 
