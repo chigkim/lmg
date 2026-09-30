@@ -13,8 +13,7 @@ import sys
 
 
 def main(argv=None):
-    # Each group imports only its own modules: pace.py reads your pace.toml on import and exits on a bad one,
-    # which is no reason for the gateway not to start or stop.
+    # Each group imports only its own modules, so the gateway starts and stops without loading the rest.
     command_line, argv = argv is None, sys.argv[1:] if argv is None else argv
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)

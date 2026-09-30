@@ -20,8 +20,7 @@ def test_a_task_costs_what_its_own_two_readings_lost():
     assert used == {"codex_week": 2}
 
 
-def test_an_overlap_on_the_same_plan_is_shared(monkeypatch):
-    monkeypatch.setattr(pace, "SPENDS", {"codex": "codex", "agy": "agy"})
+def test_an_overlap_on_the_same_plan_is_shared():
     rows = [row("2026-09-27 10:00", "before: codex a", codex_week=80),
             row("2026-09-27 10:10", "before: codex review b", codex_week=80),
             row("2026-09-27 10:10", "before: agy c", agy_week=50),
@@ -37,18 +36,20 @@ def test_typical_drops_the_dearest_once_there_are_five():
     assert pace.typical([1, 1, 1, 1, 9]) == 1
 
 
-def test_pace_toml_names_a_window_each_kind(tmp_path):
-    path = tmp_path / "pace.toml"
-    path.write_text('[paced]\ncodex = "codex_week"\n', encoding="utf-8")
-    assert pace.paced(path) == {"codex": "codex_week"}
-    assert pace.paced(tmp_path / "missing.toml") == {}
+def test_a_harness_named_for_a_plan_spends_it_and_another_spends_what_its_tasks_took():
+    assert pace.spends([("codex x", {}), ("pi a", {"claude_5h": 3, "codex_5h": 1}), ("pi b", {"claude_week": 1}),
+                        ("new c", {})]) == {"codex": "codex", "pi": "claude", "new": None}
 
 
-def test_pace_toml_refuses_a_window_that_does_not_exist(tmp_path):
-    path = tmp_path / "pace.toml"
-    path.write_text('[paced]\ncodex = "codex_month"\n', encoding="utf-8")
-    with pytest.raises(SystemExit, match="codex_month"):
-        pace.paced(path)
+def test_a_harness_is_paced_on_the_window_that_fits_fewest():
+    done = [("codex a", 10, {"codex_5h": 2, "codex_week": 1}, False)]
+    # 5h: 40 spare at 2% a task fits 20; week: 10 spare at 1% fits 10, so the week binds.
+    stand = {"codex_5h": (90, 50, 40), "codex_week": (60, 50, 10)}
+    assert pace.fit("codex", "codex", done, stand)[:4] == ["codex", "codex_week", "1.00%", "10"]
+    stand["codex_5h"] = (60, 50, 10)
+    assert pace.fit("codex", "codex", done, stand)[:4] == ["codex", "codex_5h", "2.00%", "5"]
+    assert pace.fit("codex", "codex", [], stand)[3] == "no task yet"
+    assert pace.fit("codex", "codex", done, {})[3] == "no reading"
 
 
 def test_a_reset_during_a_task_is_no_cost():
@@ -70,8 +71,8 @@ def test_a_ledger_time_is_read_to_the_second_or_to_the_minute():
 
 def test_a_task_named_nothing_has_no_harness_and_does_not_stop_pace():
     rows = [row("2026-09-27 10:00", "before: ", codex_week=80), row("2026-09-27 10:30", "after: ", codex_week=79)]
-    [(name, _, _, _)] = pace.tasks(rows)
-    assert (pace.harness_of(name), pace.plan(name)) == ("", None)
+    [(name, _, used, _)] = pace.tasks(rows)
+    assert pace.harness_of(name) == "" and pace.spends([(name, used)]) == {}
 
 
 def test_standing_signs_the_spare():
@@ -91,20 +92,20 @@ def test_a_task_starting_on_a_window_not_yet_started_costs_its_fall():
     assert used == {"claude_5h": 7}
 
 
-def test_an_overlap_of_kinds_pace_toml_does_not_name_is_not_shared(monkeypatch):
-    monkeypatch.setattr(pace, "SPENDS", {})
+def test_an_overlap_of_harnesses_that_have_spent_nothing_is_not_shared():
     rows = [row("2026-09-27 10:00", "before: a x", codex_week=80),
             row("2026-09-27 10:05", "before: b y", codex_week=80),
-            row("2026-09-27 10:20", "after: a x", codex_week=79),
-            row("2026-09-27 10:30", "after: b y", codex_week=78)]
+            row("2026-09-27 10:20", "after: a x", codex_week=80),
+            row("2026-09-27 10:30", "after: b y", codex_week=80)]
     assert [shared for *_, shared in pace.tasks(rows)] == [False, False]
 
 
-def test_pace_toml_that_is_not_toml_is_said_not_a_traceback(tmp_path):
-    path = tmp_path / "pace.toml"
-    path.write_text("[paced\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="pace.toml"):
-        pace.paced(path)
+def test_an_overlap_of_other_harnesses_on_the_plan_they_spent_is_shared():
+    rows = [row("2026-09-27 10:00", "before: pi x", claude_5h=80),
+            row("2026-09-27 10:05", "before: claude y", claude_5h=80),
+            row("2026-09-27 10:20", "after: pi x", claude_5h=78),
+            row("2026-09-27 10:30", "after: claude y", claude_5h=77)]
+    assert [shared for *_, shared in pace.tasks(rows)] == [True, True]
 
 
 def test_pace_takes_help_and_refuses_an_option_it_has_not(capsys):

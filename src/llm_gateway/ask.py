@@ -49,8 +49,7 @@ import sys
 import time
 from datetime import datetime
 
-# pace is imported where it is used: it reads pace.toml on import, and one that fails would stop every form of ask.
-from . import calls, usage
+from . import calls, pace, usage
 
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
@@ -688,13 +687,12 @@ def main(argv, command_line=False):
         return 2
     print(f"exit {status}")
     try:
-        from . import pace
         print("\n".join(usage.shown(reading("after", note))))
         print()
         sys.stdout.flush()
         pace.main(["--brief"])
     except (Exception, SystemExit) as problem:
-        # The job has run; a reading or a pace.toml that fails loses the accounting, not the answer.
+        # The job has run; a reading that fails loses the accounting, not the answer.
         print(f"the after reading failed, so this job is not in the ledger's costs: {problem}", file=sys.stderr)
     if cleanup:
         harness, name = cleanup

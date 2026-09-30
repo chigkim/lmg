@@ -237,19 +237,9 @@ lmg usage "after: pi design review"
 
 A note is a word, a colon and what it is about; `before:` and `after:` are the two `lmg usage pace` pairs, and `lmg usage pace --fresh` writes `reading: pace`. Both rows go to `src/llm_gateway/usage-ledger.csv`. A task's cost is only what its windows lost between its own two readings, so other spending before or after it does not count. A window that went up was reset during the task, so it is left out rather than counted as a gain.
 
-`lmg usage pace` groups tasks by the harness that ran them, the first word of their name. An `lmg ask` job is `agy`, `claude` or `codex`, and a review is `codex review SHA`, so it counts as Codex. For a task of your own, name the harness you are working in, such as `pi`. `src/llm_gateway/pace.toml` says which window each harness is paced on, and the plan in that window's name is the one the harness spends:
+`lmg usage pace` groups tasks by the harness that ran them, the first word of their name. An `lmg ask` job is `agy`, `claude` or `codex`, and a review is `codex review SHA`, so it counts as Codex. For a task of your own, name the harness you are working in, such as `pi`. Nothing needs setting up. A harness named for a plan spends that plan; any other, such as `pi`, spends the plan its tasks took the most points from, so it is costed once one of its tasks has moved a window, and it would be counted wrongly only if it spent more than one plan. Each harness is paced on whichever window of its plan, 5-hour or weekly, fits the fewest more tasks, which is the one that runs out first.
 
-```toml
-[paced]
-pi = "claude_5h"
-agy = "agy_week"
-claude = "claude_5h"
-codex = "codex_week"
-```
-
-A window is `claude`, `codex` or `agy`, then `_5h` or `_week`. Without the file, `lmg usage pace` still lists every task but costs and paces none.
-
-The two ledgers and `pace.toml` are gitignored: they are your records, not the tool's.
+The two ledgers are gitignored: they are your records, not the tool's.
 
 ## What `lmg usage worth` measures
 
