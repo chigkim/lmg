@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import pathlib
 import subprocess
 import sys
 import threading
@@ -159,7 +160,7 @@ def test_a_job_runs_in_its_own_worktree_and_leaves_its_answer_in_runs(repo, tmp_
     monkeypatch.setattr(ask, "run", harness)
     prompt = tmp_path / "look-prompt.md"
     prompt.write_text("look around")
-    status, note, _ = ask.job("claude", "read", prompt, None, repo, tmp_path, "claude-opus-5-5", "3600s")
+    status, note, _ = ask.job("claude", "edit", prompt, None, repo, tmp_path, "claude-opus-5-5", "3600s")
     tree = tmp_path / "worktrees" / "claude-look"
     assert (status, note, seen["cwd"]) == (0, f"claude look [pid {os.getpid()}]", tree)
     assert (tree / "TASK.md").read_text() == "look around" and not prompt.exists()
@@ -189,11 +190,11 @@ def test_a_dot_in_a_job_s_name_is_not_a_suffix(repo, tmp_path, monkeypatch):
 def test_a_fresh_job_is_not_handed_an_earlier_job_s_worktree(repo, tmp_path, monkeypatch):
     fake_harness(monkeypatch, tmp_path)
     (tmp_path / "look-prompt.md").write_text("look")
-    ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+    ask.job("claude", "edit", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
     (tmp_path / "look-prompt.md").write_text("look again")
     with pytest.raises(ask.Problem, match="earlier job"):
-        ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
-    ask.job("claude", "read", tmp_path / "look-prompt.md", "s9", repo, tmp_path, "m", "3600s")
+        ask.job("claude", "edit", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+    ask.job("claude", "edit", tmp_path / "look-prompt.md", "s9", repo, tmp_path, "m", "3600s")
     assert (tmp_path / "worktrees" / "claude-look" / "TASK.md").read_text() == "look again"
 
 
@@ -219,8 +220,7 @@ def test_a_folder_of_another_repository_is_not_taken_for_the_job(repo, tmp_path)
     git("init", "-q", cwd=other)
     with pytest.raises(ask.Problem, match="not a worktree"):
         ask.worktree(repo, other, None)
-    with pytest.raises(ask.Problem, match="to follow up in"):
-        ask.worktree(repo, tmp_path / "worktrees" / "codex-none", "id")
+    assert ask.worktree(repo, tmp_path / "worktrees" / "codex-none", "id")
 
 
 def test_usage_mistakes_exit_2_without_running_anything(repo, capsys):
@@ -232,7 +232,8 @@ def test_usage_mistakes_exit_2_without_running_anything(repo, capsys):
 
 def test_a_repository_s_home_is_beside_it_unless_homes_toml_names_one(repo, tmp_path):
     homes = tmp_path / "homes.toml"
-    assert ask.home_of(repo, homes) == repo.parent / ".lmg" / repo.name
+    assert ask.home_of(repo, homes) == ask.JOBS / repo.name
+    assert ask.JOBS == pathlib.Path(ask.__file__).resolve().parents[2] / "jobs"
     homes.write_text(f'[homes]\n"{repo.as_posix()}" = ".."\n', encoding="utf-8")
     assert ask.home_of(repo, homes) == repo.parent
 
@@ -258,7 +259,7 @@ def test_lmg_hands_each_group_the_rest_of_the_line(monkeypatch):
     assert cli.main(["usage", "worth"]) == 0
     assert seen == [("proxy", ["status", "--port", "9"]), ("ask", ["list"], False), ("usage", ["before: session x"]),
                     ("calls", ["--hours", "1"]), ("pace", ["--brief"]), ("worth", [])]
-    assert cli.main(["askai"]) == 2
+    assert cli.main(["nope"]) == 2
 
 
 def test_the_proxy_never_reads_pace_toml():
@@ -345,12 +346,12 @@ def test_an_agy_answer_quoting_the_timeout_notice_is_not_a_timeout():
 def test_a_job_refused_its_worktree_takes_no_reading(repo, tmp_path, monkeypatch):
     fake_harness(monkeypatch, tmp_path)
     (tmp_path / "look-prompt.md").write_text("look")
-    ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+    ask.job("claude", "edit", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
     readings = []
     monkeypatch.setattr(ask, "reading", lambda stage, note: readings.append(stage) or [])
     (tmp_path / "look-prompt.md").write_text("look again")
     with pytest.raises(ask.Problem, match="earlier job"):
-        ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+        ask.job("claude", "edit", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
     assert readings == []
 
 
@@ -463,3 +464,28 @@ def test_list_shows_the_id_an_earlier_run_named_when_the_latest_said_none(tmp_pa
     (tmp_path / "x-1.jsonl").write_text(stream({"type": "system", "session_id": "s1"}))
     (tmp_path / "x-2.jsonl").write_text("")
     assert ask.latest_id("claude", tmp_path, "x", 2) == "s1"
+
+
+def test_a_read_job_removes_its_worktree_and_a_follow_up_makes_it_again(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    (tmp_path / "look-prompt.md").write_text("look")
+    status, note, cleanup = ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+    tree = tmp_path / "worktrees" / "claude-look"
+    assert cleanup is None and not tree.exists() and ask.jobs(repo, tmp_path) == []
+    assert (tmp_path / "runs" / "claude" / "look-1.md").read_text(encoding="utf-8") == "ok"
+    (tmp_path / "look-prompt.md").write_text("look again")
+    ask.job("claude", "read", tmp_path / "look-prompt.md", "s9", repo, tmp_path, "m", "3600s")
+    assert (tmp_path / "runs" / "claude" / "look-2.task.md").read_text() == "look again" and not tree.exists()
+
+
+def test_a_read_job_that_left_work_keeps_its_worktree(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+
+    def writes(argv, cwd, out, err=None):
+        (cwd / "notes.txt").write_text("written anyway")
+        out.write_text(stream({"type": "result", "result": "ok", "session_id": "s9", "usage": {}}))
+        return 0
+    monkeypatch.setattr(ask, "run", writes)
+    (tmp_path / "look-prompt.md").write_text("look")
+    _, _, cleanup = ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
+    assert cleanup == ("claude", "look") and (tmp_path / "worktrees" / "claude-look" / "notes.txt").exists()

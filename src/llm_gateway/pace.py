@@ -11,8 +11,8 @@ names the one window each kind is paced on:
 
     [paced]
     session = "claude_5h"    # `before: session x` spends Claude, paced on its 5-hour window
-    critic = "codex_week"
-    worker = "agy_week"
+    codex = "codex_week"     # an `lmg ask codex` job
+    agy = "agy_week"
 
 A window is a plan and a length, `claude`, `codex` or `agy` and `5h` or
 `week`, and the plan is what the kind spends. Without the file every task is
@@ -81,8 +81,8 @@ def whole(ratio):
 
 def tasks(rows):
     """(name, minutes, {window: points used}, shared) per paired task. Shared is an overlap with a task that spends
-    the same plan, whose points the two readings cannot tell apart; a critic running beside a worker spends another
-    plan and leaves the critic's figure its own."""
+    the same plan, whose points the two readings cannot tell apart; a codex job running beside an agy job spends
+    another plan and leaves the codex job's figure its own."""
     open_, paired = {}, []
     for row in rows:
         kind, _, name = row["note"].partition(": ")

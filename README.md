@@ -40,7 +40,7 @@ lmg:
     list:                            # every open job: its runs, answer, changes and id
     options:
       --repo PATH:                   # default: the repository the current folder is in
-      --home PATH:                   # where worktrees/ and runs/ go; default homes.toml's, else PARENT/.lmg/REPO
+      --home PATH:                   # where worktrees/ and runs/ go; default homes.toml's, else jobs/REPO here
       --model NAME:                  # default gemini-3.8-flash-medium, claude-opus-5-5 or gpt-6-sol
       --timeout T:                   # agy's print timeout; default 3600s
       --force:                       # clean only: remove it even with unmerged work
@@ -172,7 +172,7 @@ lmg ask list                                     # every open job: its runs, ans
 | `--timeout T` | agy's print timeout, `3600s` unless given. |
 | `--force` | `clean` only: remove the worktree even though it holds uncommitted files or unmerged commits. |
 
-A repository's home is `PARENT/.lmg/REPO`, a folder beside it, so repositories that share a parent folder do not share jobs. `src/llm_gateway/homes.toml`, gitignored, names another for a repository; a relative home is taken from the repository:
+A repository's home is `jobs/REPO` in this checkout, gitignored, so every repository's jobs are in one place beside the tool, and `pytest` here collects only `tests/`. Two repositories of the same folder name would share a home; `src/llm_gateway/homes.toml`, gitignored, names another for a repository, and a relative home is taken from the repository:
 
 ```toml
 [homes]
@@ -187,9 +187,9 @@ A job is named after its prompt file, less `.md` and a trailing `-prompt`: `fix-
 4. The harness's last message is the answer, `HOME/runs/HARNESS/NAME-N.md`, beside its raw output, `NAME-N.jsonl`. The session id to follow up with is printed. The raw output is streamed as the job runs, so a job stopped part way still has its id, and `lmg ask list` shows it, or the one an earlier run named when the latest said none.
 5. One row goes to `src/llm_gateway/token-ledger.csv`: time, job, repository, model, uncached input, cache reads, cache writes, output, and the public-API cost.
 
-Edit work is left as an uncommitted diff in the worktree for you to review, test and merge. `lmg ask clean HARNESS NAME` removes the worktree and its branch, and refuses while it holds uncommitted files (`TASK.md` aside), commits that `HEAD` has not got, or gitignored files the job made, unless given `--force`. It counts commits on the branch and wherever the worktree's `HEAD` is, so work an agent committed on a detached `HEAD` is not lost, and a git call that fails refuses rather than reading as nothing to lose. Git deletes a worktree's ignored files with it, so an ignored file is left out of the count only where the main checkout has the same file -- a folder both have, such as `logs/`, is looked into file by file -- or where it lies in a virtual environment, a cache such as `.pytest_cache` or a `__pycache__`: a local copy of something rebuilt at will.
+A read job leaves nothing to merge, so when it ends its worktree and branch are removed, unless `clean` would refuse to, and then it says why and keeps them. A follow-up to a read job makes the worktree again at `HEAD`; the harness resumes the session by its id, not by the folder. Edit work is left as an uncommitted diff in the worktree for you to review, test and merge. `lmg ask clean HARNESS NAME` removes the worktree and its branch, and refuses while it holds uncommitted files (`TASK.md` aside), commits that `HEAD` has not got, or gitignored files the job made, unless given `--force`. It counts commits on the branch and wherever the worktree's `HEAD` is, so work an agent committed on a detached `HEAD` is not lost, and a git call that fails refuses rather than reading as nothing to lose. Git deletes a worktree's ignored files with it, so an ignored file is left out of the count only where the main checkout has the same file -- a folder both have, such as `logs/`, is looked into file by file -- or where it lies in a virtual environment, a cache such as `.pytest_cache` or a `__pycache__`: a local copy of something rebuilt at will.
 
-A follow-up is a new prompt file of the same name plus the id: `lmg ask codex edit fix-ledger-prompt.md <id>`. It runs in the same worktree and may change mode. The agent is told that `TASK.md` now holds a new task, because a session told only to read it again answered the old one from memory. An agy follow-up books only its own tokens: agy's count runs over the whole conversation, so the last earlier run of the same conversation is taken off it.
+A follow-up is a new prompt file of the same name plus the id: `lmg ask codex edit fix-ledger-prompt.md <id>`. It runs in the same worktree, made again if a read job's was removed, and may change mode. The agent is told that `TASK.md` now holds a new task, because a session told only to read it again answered the old one from memory. An agy follow-up books only its own tokens: agy's count runs over the whole conversation, so the last earlier run of the same conversation is taken off it.
 
 ### Modes
 

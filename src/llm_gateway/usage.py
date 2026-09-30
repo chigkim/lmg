@@ -254,7 +254,7 @@ def codex():
 
 
 def agy():
-    """The worker's quota, out of the verbose log of `agy models`.
+    """agy's quota, out of the verbose log of `agy models`.
 
     Listing models runs no model, so this one costs nothing. At `-v=3` the
     log carries each model group's limits: a run of `... Limit Remaining`

@@ -25,3 +25,6 @@ logs/
 /src/llm_gateway/homes.toml
 
 .pytest_cache/
+
+# lmg ask jobs: each repository's worktrees and runs
+/jobs/

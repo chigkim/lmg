@@ -17,13 +17,16 @@ prompt and sandbox, so it may write, edit and run anything the machine lets it:
     claude  read: only Read, Grep and Glob, and no MCP servers
     codex   read: the read-only sandbox, where it still runs commands to read with
 
-A repository's home is PARENT/.lmg/REPO, beside it, unless `homes.toml` beside this file names another:
+A repository's home is jobs/REPO in this tool's own checkout, gitignored, unless `homes.toml` beside this file names
+another:
 
     [homes]
     "D:/code/game" = "D:/code"      # a relative home is taken from the repository
 
 The job is named after the prompt file, less `.md` and a trailing `-prompt`. Its worktree is
-HOME/worktrees/HARNESS-NAME, on a branch of that name at HEAD, made on first use and reused by a follow-up. The
+HOME/worktrees/HARNESS-NAME, on a branch of that name at HEAD, made on first use and reused by a follow-up. A read
+job's worktree is removed when it ends, unless it holds something `clean` would refuse to lose, and a follow-up makes
+it again at HEAD. The
 prompt is moved in as TASK.md, with a numbered copy kept as HOME/runs/HARNESS/NAME-N.task.md, and the agent is
 told only to read TASK.md there. The harness's final message is the answer, HOME/runs/HARNESS/NAME-N.md, beside
 its raw output; the id to follow up with is printed. The raw output is streamed, so a run stopped part way still
@@ -53,6 +56,8 @@ HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
 TOKENS = pathlib.Path(__file__).parent / "token-ledger.csv"
 HOMES = pathlib.Path(__file__).parent / "homes.toml"
+# The tool's own checkout, src/llm_gateway/ask.py up two: it is installed editable, so this is the repository.
+JOBS = pathlib.Path(__file__).resolve().parents[2] / "jobs"
 TOKEN_FIELDS = ["time", "note", "repo", "model", "input", "cache_read", "cache_write", "cache_write_1h", "output", "usd"]
 
 ASK = "Read TASK.md in this folder and do what it says."
@@ -287,16 +292,15 @@ def common(folder):
 
 
 def worktree(repo, tree, resume):
-    """Whether TREE is still to be made, having checked it: a follow-up needs the worktree there already, and a
-    fresh job is refused one left by an earlier job, which would hand it that job's changes as its own."""
+    """Whether TREE is still to be made, having checked it: a fresh job is refused one left by an earlier job, which
+    would hand it that job's changes as its own. A follow-up whose worktree is gone, as a read job's is once it ends,
+    has it made again at HEAD; the session it resumes is the harness's, not the folder's."""
     if tree.exists():
         if common(tree) != common(repo):
             raise Problem(f"{tree} is there but is not a worktree of {repo}")
         if not resume:
             raise Problem(f"{tree} is left from an earlier job: follow it up with its id (`lmg ask list`), or clean it")
         return False
-    if resume:
-        raise Problem(f"no worktree {tree} to follow up in")
     return True
 
 
@@ -473,6 +477,13 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
         lines.append(booked(note, repo.name, model, spent))
     lines.append(f"answer: {answer}; work: {tree}")
     print("\n".join(lines), flush=True)
+    if mode == "read":
+        # A read job leaves nothing to merge, so its worktree goes now, unless clean finds something it would lose.
+        try:
+            clean(harness, name, repo, home)
+            return status, note, None
+        except Problem as kept:
+            print(f"kept the worktree: {kept}", flush=True)
     return status, note, (harness, name)
 
 
@@ -574,7 +585,7 @@ def clean(harness, name, repo, home, force=False):
 
 
 def home_of(repo, homes=None):
-    """Where REPO's worktrees/ and runs/ go: what HOMES (homes.toml) names for it, else PARENT/.lmg/REPO."""
+    """Where REPO's worktrees/ and runs/ go: what HOMES (homes.toml) names for it, else JOBS/REPO."""
     import tomllib
     path = homes or HOMES
     named = {}
@@ -584,7 +595,7 @@ def home_of(repo, homes=None):
     for key, value in named.items():
         if pathlib.Path(key).resolve() == repo:
             return (repo / value).resolve()
-    return repo.parent / ".lmg" / repo.name
+    return JOBS / repo.name
 
 
 def jobs(repo, home):
@@ -634,7 +645,7 @@ def parse(argv):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit PROMPT [ID], review SHA, clean ..., list")
     parser.add_argument("--repo", help="the repository; the one the current folder is in unless given")
-    parser.add_argument("--home", help="where worktrees/ and runs/ go; homes.toml's or PARENT/.lmg/REPO unless given")
+    parser.add_argument("--home", help="where worktrees/ and runs/ go; homes.toml's or the tool's jobs/REPO unless given")
     parser.add_argument("--model", help="the harness's model instead of its default")
     parser.add_argument("--timeout", default="3600s", help="agy's print timeout (default 3600s)")
     parser.add_argument("--force", action="store_true", help="clean a worktree even though it holds unmerged work")

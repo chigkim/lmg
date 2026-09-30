@@ -26,15 +26,15 @@ def test_a_length_of_time_is_its_two_largest_units():
 
 
 def test_a_table_is_markdown_padded_to_line_up():
-    assert usage.table(["kind", "cost"], [["critic", "3%"], ["worker", "12.5%"]]) == [
-        "| kind   |  cost |",
-        "| ------ | ----: |",
-        "| critic |    3% |",
-        "| worker | 12.5% |"]
+    assert usage.table(["kind", "cost"], [["codex", "3%"], ["agy", "12.5%"]]) == [
+        "| kind  |  cost |",
+        "| ----- | ----: |",
+        "| codex |    3% |",
+        "| agy   | 12.5% |"]
 
 
 def test_a_table_lists_what_its_headers_mean_under_it():
-    lines = usage.table(["kind", "cost"], [["critic", "3%"]], notes={"cost": "% of the window"})
+    lines = usage.table(["kind", "cost"], [["codex", "3%"]], notes={"cost": "% of the window"})
     assert lines[-2:] == ["", "- cost: % of the window"]
 
 
