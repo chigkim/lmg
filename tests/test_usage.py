@@ -1,6 +1,10 @@
 import pytest
 import csv
 import json
+import http.client
+import io
+import urllib.error
+import urllib.request
 import time
 
 from llm_gateway import usage
@@ -114,3 +118,73 @@ def test_a_word_that_is_not_a_note_is_refused_before_any_plan_is_asked(monkeypat
     assert usage.main(["plan"]) == 2
     assert usage.main(["weekly", "pace", "added"]) == 2
     assert usage.NOTE.match("before: session x") and usage.NOTE.match("reading: pace")
+
+
+class Server:
+    """A `codex app-server` that answers from a script."""
+
+    def __init__(self, replies):
+        self.stdin = self
+        self.stdout = iter(json.dumps(reply) + "\n" for reply in replies)
+
+    def write(self, text):
+        pass
+
+    def flush(self):
+        pass
+
+
+def test_a_codex_window_not_yet_started_reads_as_one_starting_now(monkeypatch):
+    limits = {"primary": {"usedPercent": 0, "resetsAt": None},
+              "secondary": {"usedPercent": 40, "resetsAt": 4102444800}}
+    monkeypatch.setattr(usage, "cli", lambda name: name)
+    monkeypatch.setattr(usage, "kill", lambda server: None)
+    monkeypatch.setattr(usage.subprocess, "Popen", lambda *a, **k: Server(
+        [{"id": 1, "result": {}}, {"id": 2, "result": {"rateLimits": limits}}]))
+    five, week = usage.codex()
+    assert (five.left, round(five.resets - time.time())) == (100, usage.FIVE_HOURS)
+    assert (week.left, week.resets) == (60, 4102444800)
+
+
+def claude_endpoint(monkeypatch, tmp_path, opened):
+    login = {"claudeAiOauth": {"accessToken": "sk-secret", "expiresAt": 4102444800000}}
+    (tmp_path / "login.json").write_text(json.dumps(login), encoding="utf-8")
+    monkeypatch.setattr(usage, "CREDENTIALS", tmp_path / "login.json")
+    monkeypatch.setattr(usage.OPENER, "open", opened)
+    monkeypatch.setattr(usage, "_claude_by_call", lambda: ["  by call"])
+
+
+@pytest.mark.parametrize("problem", [http.client.IncompleteRead(b""),
+                                     urllib.error.HTTPError(usage.USAGE, 302, "Found", {}, None)])
+def test_a_claude_request_that_fails_falls_back_to_the_call(monkeypatch, tmp_path, problem):
+    def opened(request, timeout):
+        raise problem
+    claude_endpoint(monkeypatch, tmp_path, opened)
+    assert usage.claude() == ["  by call"]
+
+
+@pytest.mark.parametrize("body", ['{"five_hour": {"utilization": null, "resets_at": null}}', '[1]'])
+def test_a_claude_reply_of_another_shape_falls_back_to_the_call(monkeypatch, tmp_path, body):
+    claude_endpoint(monkeypatch, tmp_path, lambda request, timeout: io.BytesIO(body.encode()))
+    assert usage.claude() == ["  by call"]
+
+
+def test_the_claude_token_is_in_the_header_and_in_no_line(monkeypatch, tmp_path):
+    sent = []
+
+    def opened(request, timeout):
+        sent.append(request.get_header("Authorization"))
+        return io.BytesIO(b'{"five_hour": {"utilization": 20, "resets_at": "2099-01-01T00:00:00+00:00"}}')
+    claude_endpoint(monkeypatch, tmp_path, opened)
+    [five] = usage.claude()
+    assert sent == ["Bearer sk-secret"] and five.left == 80 and "sk-secret" not in str(five)
+
+
+def test_the_claude_opener_follows_no_redirect():
+    [handler] = [h for h in usage.OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)]
+    assert handler.redirect_request(None, None, 302, "Found", {}, "https://elsewhere") is None
+
+
+def test_what_could_not_be_read_is_named_for_its_plan():
+    report = ["Now", "Claude", usage.line("5h limit:", 10, time.time() + 60), "Codex", "  could not ask: gone"]
+    assert usage.unread(report) == ["Codex: could not ask: gone"]

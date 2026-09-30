@@ -404,7 +404,8 @@ def per_point(ledger, calls, plan, kind, table):
     stretches = [[rows[0]]] if rows else []
     for (a, was, reset), row in zip(rows, rows[1:]):
         b, now, then = row
-        same = abs(then - reset) <= 600 if reset and then else kind == "5h" and not reset and not then
+        # A whole window has nothing to lose to a reset, and one not started had a made-up reset the real one lands after.
+        same = was == 100 or (abs(then - reset) <= 600 if reset and then else kind == "5h" and not reset and not then)
         if now <= was and same and (kind == "week" or b - a <= 3 * 3600):
             stretches[-1].append(row)
         else:
@@ -426,7 +427,8 @@ def worth(argv=()):
         print(f"lmg usage worth takes no options, not {' '.join(argv)}", file=sys.stderr)
         return 2
     table = prices()
-    now = usage.windows(usage.asked())
+    report = usage.asked()
+    now = usage.windows(report)
     if not usage.LEDGER.exists():
         print(f"no ledger yet at {usage.LEDGER}; `lmg usage NOTE` starts one")
         return
@@ -441,7 +443,7 @@ def worth(argv=()):
     for plan in PLANS:
         for kind, length in (("5h", usage.FIVE_HOURS), ("week", usage.WEEK)):
             window = now.get(f"{plan}_{kind}")
-            if window is None:  # Claude's plan has no weekly window
+            if window is None:  # Claude's plan has no weekly window, or the plan could not be read, said below
                 continue
             points, usd = per_point(ledger, calls, plan, kind, table)
             opened = window.resets - length
@@ -465,6 +467,9 @@ def worth(argv=()):
                "spent (calls)": "every recorded call since this window opened, priced",
                "spent (meter)": "the % this window has lost times $ per 1%; it differs from spent (calls) by what"
                                 " the rate misjudges, or by calls these records do not hold"})))
+    unread = usage.unread(report)
+    if unread:
+        print("\n" + "\n".join(unread))
 
 
 def main(argv=None):

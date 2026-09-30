@@ -80,3 +80,28 @@ def test_standing_signs_the_spare():
     reading["codex_week_reset"] = "2020-01-04 10:00"
     # Half the 5h window to run and 30% left is behind pace; three days of seven and 60% left is ahead.
     assert pace.standing(reading) == {"codex_5h": (30, 50, -20), "codex_week": (60, 43, 17)}
+
+
+def test_a_task_starting_on_a_window_not_yet_started_costs_its_fall():
+    # The before reading made up a reset of five hours on; the task's first call set the real one twenty minutes later.
+    before = row("2026-09-27 10:00:00", "before: session x", claude_5h=100)
+    after = row("2026-09-27 10:40:00", "after: session x", claude_5h=93)
+    before["claude_5h_reset"], after["claude_5h_reset"] = "2026-09-27 15:00:00", "2026-09-27 15:20:00"
+    [(_, _, used, _)] = pace.tasks([before, after])
+    assert used == {"claude_5h": 7}
+
+
+def test_an_overlap_of_kinds_pace_toml_does_not_name_is_not_shared(monkeypatch):
+    monkeypatch.setattr(pace, "SPENDS", {})
+    rows = [row("2026-09-27 10:00", "before: a x", codex_week=80),
+            row("2026-09-27 10:05", "before: b y", codex_week=80),
+            row("2026-09-27 10:20", "after: a x", codex_week=79),
+            row("2026-09-27 10:30", "after: b y", codex_week=78)]
+    assert [shared for *_, shared in pace.tasks(rows)] == [False, False]
+
+
+def test_pace_toml_that_is_not_toml_is_said_not_a_traceback(tmp_path):
+    path = tmp_path / "pace.toml"
+    path.write_text("[paced\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="pace.toml"):
+        pace.paced(path)

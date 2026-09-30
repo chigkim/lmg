@@ -52,8 +52,11 @@ def paced(path=usage.DATA / "pace.toml"):
     """{kind: window} out of pace.toml, or nothing when there is none."""
     if not path.exists():
         return {}
-    with path.open("rb") as handle:
-        kinds = tomllib.load(handle).get("paced", {})
+    try:
+        with path.open("rb") as handle:
+            kinds = tomllib.load(handle).get("paced", {})
+    except tomllib.TOMLDecodeError as problem:
+        raise SystemExit(f"{path}: {problem}")
     for kind, window in kinds.items():
         if window not in WINDOWS:
             raise SystemExit(f"{path}: {kind} = {window!r} is not one of {', '.join(WINDOWS)}")
@@ -95,13 +98,17 @@ def tasks(rows):
             paired.append((name, moment(before["time"]), moment(row["time"]), used))
     return [(name, (end - start).total_seconds() / 60, used,
              any(s < end and start < e for j, (n, s, e, _) in enumerate(paired)
-                 if j != i and plan(n) == plan(name)))
+                 if j != i and plan(name) is not None and plan(n) == plan(name)))
             for i, (name, start, end, used) in enumerate(paired)]
 
 
 def same_window(before, after, window):
     """Whether two readings are of one window: a reset time that moved is a new window, whose figure is no fall from
-    the old one's. A reading with no reset time, as the ledger's first rows are, is taken at its word."""
+    the old one's. A reading with no reset time, as the ledger's first rows are, is taken at its word. A window whole
+    at the first reading had nothing to lose to a reset: one not started yet was given a made-up reset of a length
+    from then, which the real one, set by the first call, lands after."""
+    if int(before[f"{window}_left"] or 0) == 100:
+        return True
     was, now = before[f"{window}_reset"], after[f"{window}_reset"]
     return not (was and now) or abs((moment(now) - moment(was)).total_seconds()) <= 600
 

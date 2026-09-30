@@ -74,3 +74,10 @@ def test_a_pi_provider_on_an_api_key_is_no_plan(tmp_path, monkeypatch):
         {"anthropic": {"type": "api_key"}, "openai-codex": {"type": "oauth"}}), encoding="utf-8")
     monkeypatch.setattr(calls, "HOME", tmp_path)
     assert calls.subscribed() == {"openai-codex"}
+
+
+def test_a_window_not_yet_started_is_one_stretch_with_the_fall_after_it():
+    ledger = [{"time": "2026-09-27 10:00:00", "claude_5h_left": "100", "claude_5h_reset": "2026-09-27 15:00:00"},
+              {"time": "2026-09-27 10:40:00", "claude_5h_left": "93", "claude_5h_reset": "2026-09-27 15:20:00"}]
+    inside = call("gpt-6-sol", input=100_000, time=calls.stamp("2026-09-27 10:30:00"), name="claude")
+    assert calls.per_point(ledger, [inside], "claude", "5h", RATES) == (7, pytest.approx(0.2))

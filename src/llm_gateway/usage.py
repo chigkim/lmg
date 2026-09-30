@@ -17,6 +17,7 @@ counts all of them.
 
 import contextlib
 import csv
+import http.client
 import io
 import json
 import os
@@ -159,16 +160,18 @@ def claude():
         with OPENER.open(request, timeout=30) as reply:
             windows = json.load(reply)
         del request
-    except (OSError, LookupError, ValueError):
-        # The token, the file, or the endpoint is unavailable; asking with a
-        # call refreshes the login as a side effect.
+        names = {"five_hour": "5h limit:", "seven_day": "Weekly limit:"}
+        return [line(label, windows[name]["utilization"],
+                     unstarted(label, windows[name]["resets_at"]
+                               and datetime.fromisoformat(
+                                   windows[name]["resets_at"]).timestamp()))
+                for name, label in names.items() if windows.get(name)]
+    except (OSError, http.client.HTTPException, LookupError, ValueError,
+            TypeError, AttributeError):
+        # The token, the file, or the endpoint is unavailable, or its reply
+        # is not the shape read above; asking with a call refreshes the
+        # login as a side effect.
         return _claude_by_call()
-    names = {"five_hour": "5h limit:", "seven_day": "Weekly limit:"}
-    return [line(label, windows[name]["utilization"],
-                 unstarted(label, windows[name]["resets_at"]
-                           and datetime.fromisoformat(
-                               windows[name]["resets_at"]).timestamp()))
-            for name, label in names.items() if windows.get(name)]
 
 
 def unstarted(label, resets):
@@ -244,8 +247,9 @@ def codex():
                        ("secondary", "Weekly limit:")):
         window = limits.get(key)
         if window:
+            # resetsAt is null for a window not yet started, as Claude's is.
             out.append(line(label, window["usedPercent"],
-                            window["resetsAt"]))
+                            unstarted(label, window["resetsAt"])))
     return out
 
 
@@ -422,7 +426,7 @@ def shown(report):
 
     A window is named for its plan, its model group if the plan has more than one, and its length: `agy Gemini
     5h`. Spare is signed, + ahead of an even pace and - behind it."""
-    rows, said, plan, group = [], [], "", ""
+    rows, plan, group = [], "", ""
     for row in report[1:]:
         if not row.startswith(" "):
             plan, group = row, ""
@@ -431,10 +435,20 @@ def shown(report):
         elif isinstance(row, Window):
             rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%",
                          f"in {span(row.resets - time.time())}, at {when(row.resets)}"])
-        else:
-            said.append(f"{plan}: {row.strip()}")
+    said = unread(report)
     table_lines = table(["window", "left", "spare", "resets"], rows, text=(0, 3)) if rows else []
     return [report[0], ""] + table_lines + ([""] + said if said else [])
+
+
+def unread(report):
+    """What the report says instead of a window, each named for its plan: `Codex: could not ask: ...`."""
+    said, plan = [], ""
+    for row in report[1:]:
+        if not row.startswith(" "):
+            plan = row
+        elif not isinstance(row, (Group, Window)):
+            said.append(f"{plan}: {row.strip()}")
+    return said
 
 
 def windows(report):
