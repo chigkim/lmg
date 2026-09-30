@@ -4,7 +4,7 @@
     lmg ask agy|claude|codex read|edit PROMPT [ID]   a job, and review, clean and list: ask.py
     lmg usage [NOTE]                             each plan's windows, and a ledger row with a note: usage.py
     lmg usage calls ...                          every call each plan was spent on: calls.py
-    lmg usage pace ...                           how many more tasks each harness can run: pace.py
+    lmg usage tasks                              what a task costs each window: tasks.py
     lmg usage worth                              what each window is worth in dollars: calls.py
 
 Each form's own options follow its words; `lmg proxy --help`, `lmg ask --help` and `lmg usage --help` list them.
@@ -29,9 +29,9 @@ def main(argv=None):
         if rest and rest[0] == "calls":
             from . import calls
             return calls.main(rest[1:])
-        if rest and rest[0] == "pace":
-            from . import pace
-            return pace.main(rest[1:])
+        if rest and rest[0] == "tasks":
+            from . import tasks
+            return tasks.main(rest[1:])
         if rest and rest[0] == "worth":
             from . import calls
             return calls.worth(rest[1:])

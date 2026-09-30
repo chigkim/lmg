@@ -194,16 +194,18 @@ def test_usage_help_names_every_form_and_reads_nothing(monkeypatch, capsys):
     monkeypatch.setattr(usage, "asked", lambda: pytest.fail("help read the plans"))
     assert usage.main(["--help"]) == 0
     out = capsys.readouterr().out
-    assert all(f"lmg usage {form}" in out for form in ("calls", "pace", "worth"))
+    assert all(f"lmg usage {form}" in out for form in ("calls", "tasks", "worth"))
 
 
-def test_tasks_left_is_a_column_where_the_ledger_has_a_cost_and_a_dash_where_not():
+def test_task_cost_and_tasks_left_are_columns_where_the_ledger_has_a_cost_and_a_dash_where_not():
     soon = time.time() + usage.FIVE_HOURS * 0.5
     report = ["Now 6:00 AM on 30 Sep", "Codex", usage.line("5h limit:", 70, soon),
               "agy", usage.Group("  Gemini Models"), usage.line("5h limit:", 20, soon, indent="    "),
               usage.Group("  Claude and GPT models"), usage.line("5h limit:", 0, soon, indent="    ")]
-    lines = usage.shown(report, {"codex_5h": 15, "agy_5h": "no task yet"})
-    assert [cell.strip() for cell in lines[2].split("|")[1:-1]] == ["window", "left", "spare", "tasks left", "resets"]
-    body = {line.split("|")[1].strip(): line.split("|")[4].strip() for line in lines[4:7]}
-    assert body == {"Codex 5h": "15", "agy Gemini 5h": "no task yet", "agy Claude and GPT 5h": "-"}
+    lines = usage.shown(report, {"codex_5h": ("4%", 15), "agy_5h": ("-", "no task yet")})
+    assert [cell.strip() for cell in lines[2].split("|")[1:-1]] == [
+        "window", "left", "spare", "task cost", "tasks left", "resets"]
+    body = {line.split("|")[1].strip(): [cell.strip() for cell in line.split("|")[4:6]] for line in lines[4:7]}
+    assert body == {"Codex 5h": ["4%", "15"], "agy Gemini 5h": ["-", "no task yet"],
+                    "agy Claude and GPT 5h": ["-", "-"]}
     assert "tasks left" not in usage.shown(report)[2]

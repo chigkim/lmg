@@ -331,7 +331,7 @@ def main(argv=None):
         lmg usage "before: pi mutation sweep"
 
     A reading just before a task and one just after it is what the task
-    cost, whatever else was spending the same plans in between; `lmg usage pace`
+    cost, whatever else was spending the same plans in between; `lmg usage tasks`
     pairs them.
 
     A note is `word: what`, so a mistyped form -- `lmg usage calss`, or the old `lmg usage plan` -- is refused
@@ -343,7 +343,7 @@ def main(argv=None):
         return 0
     if note and not NOTE.match(note):
         print(f"lmg usage: {note!r} is not a note or a form of lmg usage. A note is 'word: what',"
-              " as 'before: pi x'; the forms are calls, pace and worth.", file=sys.stderr)
+              " as 'before: pi x'; the forms are calls, tasks and worth.", file=sys.stderr)
         return 2
     report = asked()
     print("\n".join(shown(report, costed(report))))
@@ -352,14 +352,15 @@ def main(argv=None):
 
 
 HELP = """\
-lmg usage [NOTE]                   every plan's windows: % left, spare against even pace, when each resets
+lmg usage [NOTE]                   every plan's windows: % left, spare against even pace, what a task costs,
+                                   how many more tasks it can run, when each resets
 lmg usage calls [--hours N | --since 'YYYY-MM-DD HH:MM']
                                    every call each plan was spent on, and its public-API dollars
-lmg usage pace [--tasks]           how many more tasks each harness can run
+lmg usage tasks                    what a task costs each window, and every task it is measured from
 lmg usage worth                    what each window is worth in public-API dollars
 
 A NOTE is 'word: what'. It also adds the reading to the ledger: 'before: NAME' and 'after: NAME' around a task
-are what lmg usage pace pairs, and NAME's first word is the harness that ran it. Each form takes --help."""
+are what lmg usage tasks pairs, and NAME's first word is the harness that ran it. Each form takes --help."""
 
 
 # A ledger note: a word, a colon, and what it is about.
@@ -435,12 +436,12 @@ def asked():
     return report
 
 
-def shown(report, left=None):
+def shown(report, costs=None):
     """The report as its time, one table of every window it read, and anything that could not be read under it.
 
     A window is named for its plan, its model group if the plan has more than one, and its length: `agy Gemini
-    5h`. Spare is signed, + ahead of an even pace and - behind it. LEFT, {`codex_5h` and the like: tasks left},
-    adds that column, - for a window it has nothing for, as agy's non-Gemini group."""
+    5h`. Spare is signed, + ahead of an even pace and - behind it. COSTS, {`codex_5h` and the like: (task cost,
+    tasks left)}, adds those columns, - for a window it has nothing for, as agy's non-Gemini group."""
     rows, plan, group = [], "", ""
     for row in report[1:]:
         if not row.startswith(" "):
@@ -450,20 +451,20 @@ def shown(report, left=None):
         elif isinstance(row, Window):
             key = f"{plan.lower()}_{row.kind}" if group in ("", "Gemini") else None
             rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%"]
-                        + ([left.get(key, "-")] if left is not None else [])
+                        + (list(costs.get(key, ("-", "-"))) if costs is not None else [])
                         + [f"in {span(row.resets - time.time())}, at {when(row.resets)}"])
     said = unread(report)
-    headers = ["window", "left", "spare"] + (["tasks left"] if left is not None else []) + ["resets"]
+    headers = ["window", "left", "spare"] + (["task cost", "tasks left"] if costs is not None else []) + ["resets"]
     table_lines = table(headers, rows, text=(0, len(headers) - 1)) if rows else []
     return [report[0], ""] + table_lines + ([""] + said if said else [])
 
 
 def costed(report):
-    """Tasks left on each window the report read, from the ledger's costs; None, and said, if the ledger cannot
-    say, since the windows themselves are still worth printing."""
-    from . import pace
+    """Task cost and tasks left on each window the report read, from the ledger; None, and said, if the ledger
+    cannot say, since the windows themselves are still worth printing."""
+    from . import tasks
     try:
-        return pace.tasks_left(windows(report))
+        return tasks.costs(windows(report))
     except Exception as problem:
         print(f"no tasks left column: {problem}", file=sys.stderr)
         return None

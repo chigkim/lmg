@@ -34,7 +34,7 @@ holds the id, and `list` finds it there. A follow-up is a new prompt file of the
 id, and may change mode.
 
 A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME [pid N]` and `after: ...`, so the
-harness is what `lmg usage pace` costs it under; a review's note is `codex review SHA`. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
+harness is what `lmg usage` costs it under; a review's note is `codex review SHA`. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
 cache reads, cache writes and output, which add up to what the model read and wrote, and what they would cost on
 the public API at the rates in `prices.csv`. All three sit beside this file.
 """
@@ -49,7 +49,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import calls, pace, usage
+from . import calls, usage
 
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
@@ -330,7 +330,7 @@ def paired():
 
 
 def reading(stage, note):
-    """An lmg usage reading into its ledger, which lmg usage pace pairs; a plan that cannot be asked is said and skipped."""
+    """An lmg usage reading into its ledger, which lmg usage tasks pairs; a plan that cannot be asked is said and skipped."""
     report = usage.asked()
     try:
         usage.record(f"{stage}: {note}", report)
@@ -689,9 +689,6 @@ def main(argv, command_line=False):
     try:
         after = reading("after", note)
         print("\n".join(usage.shown(after, usage.costed(after))))
-        print()
-        sys.stdout.flush()
-        pace.main([])
     except (Exception, SystemExit) as problem:
         # The job has run; a reading that fails loses the accounting, not the answer.
         print(f"the after reading failed, so this job is not in the ledger's costs: {problem}", file=sys.stderr)

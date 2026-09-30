@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from llm_gateway import ask, calls, cli, daemon, pace, usage
+from llm_gateway import ask, calls, cli, daemon, tasks, usage
 
 
 def test_a_job_is_named_after_its_prompt_file():
@@ -249,16 +249,16 @@ def test_lmg_hands_each_group_the_rest_of_the_line(monkeypatch):
     monkeypatch.setattr(ask, "main", lambda argv, command_line: seen.append(("ask", argv, command_line)) or 0)
     monkeypatch.setattr(usage, "main", lambda argv: seen.append(("usage", argv)) or 0)
     monkeypatch.setattr(calls, "main", lambda argv: seen.append(("calls", argv)) or 0)
-    monkeypatch.setattr(pace, "main", lambda argv: seen.append(("pace", argv)) or 0)
+    monkeypatch.setattr(tasks, "main", lambda argv: seen.append(("tasks", argv)) or 0)
     monkeypatch.setattr(calls, "worth", lambda argv: seen.append(("worth", argv)) or 0)
     assert cli.main(["proxy", "status", "--port", "9"]) == 0
     assert cli.main(["ask", "list"]) == 0
     assert cli.main(["usage", "before: pi x"]) == 0
     assert cli.main(["usage", "calls", "--hours", "1"]) == 0
-    assert cli.main(["usage", "pace", "--tasks"]) == 0
+    assert cli.main(["usage", "tasks"]) == 0
     assert cli.main(["usage", "worth"]) == 0
     assert seen == [("proxy", ["status", "--port", "9"]), ("ask", ["list"], False), ("usage", ["before: pi x"]),
-                    ("calls", ["--hours", "1"]), ("pace", ["--tasks"]), ("worth", [])]
+                    ("calls", ["--hours", "1"]), ("tasks", []), ("worth", [])]
     assert cli.main(["nope"]) == 2
 
 
@@ -266,7 +266,7 @@ def test_the_proxy_loads_only_its_own_modules():
     code = ("import sys; from llm_gateway import cli; cli.main(['proxy', 'status', '--port', '1']); "
             "print(sorted(m for m in sys.modules if m.startswith('llm_gateway.')))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
-    assert "llm_gateway.daemon" in out and "llm_gateway.pace" not in out and "llm_gateway.ask" not in out
+    assert "llm_gateway.daemon" in out and "llm_gateway.tasks" not in out and "llm_gateway.ask" not in out
     assert cli.main([]) == 2
 
 
