@@ -5,11 +5,11 @@ One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed
 | Command | What it does |
 | --- | --- |
 | `lmg proxy [run\|start\|stop\|restart\|status]` | The gateway. It speaks OpenAI's Responses and Chat Completions APIs, and answers them from a Claude or ChatGPT subscription instead of an API key. |
-| `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
-| `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), and when each resets. With a note, it also adds a row to the ledger, which keeps agy's Gemini group only. |
+| `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
+| `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), and when each resets. With a note, `word: what` such as `"before: session x"`, it also adds a row to the ledger, which keeps agy's Gemini group only. Any other word is refused, so a mistyped form writes nothing. |
 | `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it, with tokens and what they would cost on the public API. |
-| `lmg usage worth` | What each window is worth in dollars, sized from the ledger and those records, and how much of it is spent. Slower than the rest, since it reads every record back to the ledger's first row. |
 | `lmg usage pace [--fresh] [--brief]` | What each kind of task costs a window, from paired `before:` and `after:` rows in the ledger, and how many more fit, paced on the ledger's latest reading. The windows themselves are `lmg usage`'s. |
+| `lmg usage worth` | What each window is worth in dollars, sized from the ledger and the clients' records, and how much of it is spent. It takes no options, and it is slower than the rest (about 9 seconds), since it reads every record back to a week before the ledger's first row. |
 
 Three things run a model: `lmg proxy`, every form of `lmg ask` but `clean` and `list` (`review` included), and the Haiku fallback of `lmg usage` described below. `lmg usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored; a redirect is refused rather than followed, because following it would send the token on. When that request cannot be made or fails -- an expired token, no credentials file, no network, or an error status -- it falls back to a one-word Haiku call, which costs a little and refreshes the login.
 
@@ -44,8 +44,8 @@ lmg:
       --model NAME:                  # default gemini-3.8-flash-medium, claude-opus-5-5 or gpt-6-sol
       --timeout T:                   # agy's print timeout; default 3600s
       --force:                       # clean only: remove it even with unmerged work
-  usage:                             # each plan's windows: percent left, resets, pace
-    NOTE:                            # optional: also add a ledger row, e.g. "before: session x"
+  usage:                             # every window in one table: percent left, spare, resets
+    NOTE:                            # optional: also add a ledger row; "word: what", e.g. "before: session x"
     calls:                           # every call each plan was spent on, and its API cost
       --hours N:                     # default 5
       --since "YYYY-MM-DD HH:MM":    # local time; overrides --hours
@@ -209,6 +209,22 @@ A new worktree holds what git tracks and nothing else: no `.venv`, no `node_modu
 
 On Windows every process `lmg ask` starts dies with it, however it is stopped: it puts itself in a job object that kills its members when it exits. Elsewhere the harness runs in its own process group, which is killed when the harness ends and when `lmg ask` exits on a signal it can catch; a `kill -9` of `lmg ask` leaves the group running. A plan reading that runs past its timeout has its whole process tree killed, since on Windows an npm-installed CLI is a `.cmd` shim whose real process is a grandchild.
 
+## Reading the windows
+
+```
+$ lmg usage
+Now 6:17 AM on 30 Sep
+
+| window                  | left | spare | resets                          |
+| ----------------------- | ---: | ----: | ------------------------------- |
+| Claude 5h               |  93% |  +22% | in 3h32m, at 9:50 AM            |
+| Codex week              |  59% |  +12% | in 3d6h, at 1:15 PM on 03 Oct   |
+| agy Gemini 5h           |  95% |  +30% | in 3h16m, at 9:33 AM            |
+| agy Claude and GPT week |  68% |  -15% | in 5d19h, at 2:11 AM on 06 Oct  |
+```
+
+Spare is what is left less what would be left had the window been spent evenly over its length: +12% is that much ahead of pace, -15% that much behind. A reset today gives only its time; a later one gives its date too. A plan that could not be read is named under the table with the reason. A window its plan does not report is not listed: Claude's endpoint does not always give a weekly figure.
+
 ## Measuring a task
 
 `lmg ask` takes its own readings. For a task of your own, take a reading before it and one after, each under the task's name:
@@ -219,7 +235,7 @@ lmg usage "before: session design review"
 lmg usage "after: session design review"
 ```
 
-Both rows go to `src/llm_gateway/usage-ledger.csv`. A task's cost is only what its windows lost between its own two readings, so other spending before or after it does not count. A window that went up was reset during the task, so it is left out rather than counted as a gain.
+A note is a word, a colon and what it is about; `before:` and `after:` are the two `lmg usage pace` pairs, and `lmg usage pace --fresh` writes `reading: pace`. Both rows go to `src/llm_gateway/usage-ledger.csv`. A task's cost is only what its windows lost between its own two readings, so other spending before or after it does not count. A window that went up was reset during the task, so it is left out rather than counted as a gain.
 
 `lmg usage pace` groups tasks by the first word of their name, so an `lmg ask` job is of the kind `agy`, `claude` or `codex`. `src/llm_gateway/pace.toml` says which window each kind is paced on, and the plan in that window's name is the one the kind spends:
 
@@ -236,9 +252,13 @@ A window is `claude`, `codex` or `agy`, then `_5h` or `_week`. Without the file,
 
 The two ledgers and `pace.toml` are gitignored: they are your records, not the tool's.
 
-## Where `lmg usage calls` reads
+## What `lmg usage worth` measures
 
-A plan's limit counts every call made on it, by whatever made it, so `lmg usage calls` reads every record the clients leave:
+Between two ledger rows where a window's figure fell, the calls made are what that many points cost, so a point's price is the calls made during every fall the ledger saw divided by the points they took, and a hundred points are the window. One gap is rough, because the ledger keeps whole percents; the sum over many is fair. It prints that price, the whole window, and what has gone since the window opened two ways: the calls since then, priced, and the points lost times the price. The two differ by what the price misjudges, or by calls these records do not hold. A window with no fall to measure, or a call in one from a model with no price, is `-`.
+
+## Where `lmg usage calls` and `lmg usage worth` read
+
+A plan's limit counts every call made on it, by whatever made it, so both read every record the clients leave:
 
 - Claude: `~/.claude/projects`, Claude Code's transcripts, including calls made through Pi's claude-bridge.
 - Codex: `~/.codex/sessions`, and Pi's `openai-codex` provider in `~/.pi/agent/sessions`.
