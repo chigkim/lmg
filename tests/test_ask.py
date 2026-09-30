@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -160,7 +161,7 @@ def test_a_job_runs_in_its_own_worktree_and_leaves_its_answer_in_runs(repo, tmp_
     prompt.write_text("look around")
     status, note, _ = ask.job("claude", "read", prompt, None, repo, tmp_path, "claude-opus-5-5", "3600s")
     tree = tmp_path / "worktrees" / "claude-look"
-    assert (status, note, seen["cwd"]) == (0, "claude look", tree)
+    assert (status, note, seen["cwd"]) == (0, f"claude look [pid {os.getpid()}]", tree)
     assert (tree / "TASK.md").read_text() == "look around" and not prompt.exists()
     assert (tmp_path / "runs" / "claude" / "look-1.task.md").read_text() == "look around"
     assert (tmp_path / "runs" / "claude" / "look-1.md").read_text(encoding="utf-8") == "the answer"

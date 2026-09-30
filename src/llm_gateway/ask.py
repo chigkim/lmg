@@ -301,6 +301,12 @@ def numbered(folder, name):
     return n
 
 
+def paired():
+    """What makes a job's two readings a pair: this process's pid, which no job running beside it shares, so two
+    jobs of one name at once, in two repositories, are not paired with each other's readings."""
+    return f" [pid {os.getpid()}]"
+
+
 def reading(stage, note):
     """An lmg usage reading into its ledger, which lmg usage pace pairs; a plan that cannot be asked is said and skipped."""
     report = usage.asked()
@@ -402,7 +408,7 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
     name = job_name(prompt)
     tree = home / "worktrees" / f"{harness}-{name}"
     runs = home / "runs" / harness
-    note = f"{harness} {name}" + (" (resumed)" if resume else "")
+    note = f"{harness} {name}" + (" (resumed)" if resume else "") + paired()
     fresh = worktree(repo, tree, resume)
     # After the checks, which may refuse the job, and before anything is made or moved, so a reading that fails
     # (a ledger open in Excel) leaves no job half made.
@@ -456,7 +462,7 @@ def review(sha, repo, home, model):
     while (runs / f"review-{sha}-{n}.md").exists():
         n += 1
     answer, raw, log = (runs / f"review-{sha}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
-    note = f"review {sha}"
+    note = f"review {sha}" + paired()
     reading("before", note)
     started = time.time()
     status = run(["codex", "exec", "-m", model, "-s", "read-only", "-o", str(answer), "review",
@@ -618,10 +624,14 @@ def main(argv, command_line=False):
         print(problem, file=sys.stderr)
         return 2
     print(f"exit {status}")
-    print("\n".join(reading("after", note)))
-    print()
-    sys.stdout.flush()
-    pace.main(["--brief"])
+    try:
+        print("\n".join(reading("after", note)))
+        print()
+        sys.stdout.flush()
+        pace.main(["--brief"])
+    except (Exception, SystemExit) as problem:
+        # The job has run; a reading or a pace.toml that fails loses the accounting, not the answer.
+        print(f"the after reading failed, so this job is not in the ledger's costs: {problem}", file=sys.stderr)
     if cleanup:
         harness, name = cleanup
         print(f"\nREMINDER: when the answer is reviewed and anything worth keeping is merged, remove the worktree:\n"

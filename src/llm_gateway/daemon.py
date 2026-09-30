@@ -53,6 +53,25 @@ def alive(pid):
     return True
 
 
+def born(pid):
+    """When the process started, in the kernel's own units, so a pid reused by another process is told apart;
+    None where that cannot be read."""
+    if WINDOWS:
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return None
+        times = [ctypes.c_ulonglong() for _ in range(4)]
+        ok = kernel.GetProcessTimes(handle, *map(ctypes.byref, times))
+        kernel.CloseHandle(handle)
+        return times[0].value if ok else None
+    try:  # Linux: field 22 of /proc/PID/stat, counted after the parenthesised name, which may hold spaces
+        return int(pathlib.Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def listening(port):
     """Whether something accepts connections on the port. A bare connect, so the gateway logs no refused request."""
     try:
@@ -63,13 +82,15 @@ def listening(port):
 
 
 def running(port):
-    """The daemon's pid when its pid file names a live process, else None; a stale pid file is removed."""
+    """The daemon's pid when its pid file names a live process that started when the daemon did, else None;
+    a stale pid file is removed."""
     path = pid_file(port)
     try:
-        pid = int(path.read_text().strip())
+        pid, _, started = path.read_text().strip().partition(" ")
+        pid = int(pid)
     except (OSError, ValueError):
         return None
-    if alive(pid):
+    if alive(pid) and started == str(born(pid)):
         return pid
     path.unlink(missing_ok=True)
     return None
@@ -104,7 +125,7 @@ def start(args):
         out.write(f"\n==== start {time.strftime('%Y-%m-%d %H:%M:%S')} in {os.getcwd()}\n")
         out.flush()
         child = spawn(argv, out)
-    pid_file(args.port).write_text(str(child.pid))
+    pid_file(args.port).write_text(f"{child.pid} {born(child.pid)}")
     deadline = time.monotonic() + READY
     while time.monotonic() < deadline:
         if child.poll() is not None:
@@ -115,15 +136,15 @@ def start(args):
             print(f"started on http://127.0.0.1:{args.port}/v1, pid {child.pid}; log {log_file(args.port)}")
             return 0
         time.sleep(0.3)
-    print(f"pid {child.pid} is not answering on port {args.port} after {READY}s; see {log_file(args.port)}")
+    kill(child.pid)
+    pid_file(args.port).unlink(missing_ok=True)
+    print(f"pid {child.pid} was not answering on port {args.port} after {READY}s, so it was stopped; "
+          f"see {log_file(args.port)}")
     return 1
 
 
-def stop(args):
-    pid = running(args.port)
-    if not pid:
-        print(f"not running on port {args.port}")
-        return 0
+def kill(pid):
+    """Stop the gateway at PID and everything it started, and wait for it to go."""
     if WINDOWS:
         # /T takes the Claude children with it; Windows has no SIGTERM to let the gateway close them itself.
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -131,11 +152,18 @@ def stop(args):
         os.killpg(pid, signal.SIGTERM)                 # aiohttp shuts down cleanly on SIGTERM
     for _ in range(50):
         if not alive(pid):
-            break
+            return
         time.sleep(0.2)
-    else:
-        if not WINDOWS:
-            os.killpg(pid, signal.SIGKILL)
+    if not WINDOWS:
+        os.killpg(pid, signal.SIGKILL)
+
+
+def stop(args):
+    pid = running(args.port)
+    if not pid:
+        print(f"not running on port {args.port}")
+        return 0
+    kill(pid)
     pid_file(args.port).unlink(missing_ok=True)
     print(f"stopped pid {pid}")
     return 0

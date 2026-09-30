@@ -124,6 +124,17 @@ CREDENTIALS = pathlib.Path.home() / ".claude" / ".credentials.json"
 USAGE = "https://api.anthropic.com/api/oauth/usage"
 
 
+class Unredirected(urllib.request.HTTPRedirectHandler):
+    """No redirect is followed: urllib would copy the Authorization header to wherever it pointed."""
+
+    def redirect_request(self, *args):
+        return None
+
+
+# A redirect is then an HTTPError, an OSError, and answered as any failed request is.
+OPENER = urllib.request.build_opener(Unredirected)
+
+
 def claude():
     """Claude's limits from the endpoint `/usage` reads, which is free;
     the Haiku call is kept for when that request cannot be made or fails.
@@ -141,7 +152,7 @@ def claude():
             "Authorization": "Bearer " + login["accessToken"],
             "anthropic-beta": "oauth-2025-04-20"})
         del login
-        with urllib.request.urlopen(request, timeout=30) as reply:
+        with OPENER.open(request, timeout=30) as reply:
             windows = json.load(reply)
         del request
     except (OSError, LookupError, ValueError):

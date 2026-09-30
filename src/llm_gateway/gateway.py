@@ -344,16 +344,21 @@ def fingerprint(model, system, tools):
     return hashlib.sha256(json.dumps([model, system, tools], sort_keys=True).encode()).hexdigest()
 
 
+def said(convo):
+    """A hash of everything the user said in a conversation, which the client sends again word for word."""
+    return hashlib.sha256(json.dumps([plain(e[1]) for e in convo if e[0] == "user"]).encode()).hexdigest()
+
+
 # ---------------------------------------------------------------- the Claude side
 
 class ClaudeSession:
     """One `claude` child and the conversation it holds, paused whenever Claude calls a client tool."""
 
     paused = {}  # call id -> the session waiting on it
-    idle = {}    # (fingerprint, hash of the last reply) -> a session that finished its reply
+    idle = {}    # (fingerprint, said(), hash of the last reply) -> a session that finished its reply
 
     def __init__(self, model, system, tools, effort):
-        self.model, self.key = model, fingerprint(model, system, tools)
+        self.model, self.key, self.said = model, fingerprint(model, system, tools), None
         self.custom = {name for name, _, _, custom in tools if custom}
         self.events, self.futures, self.waiting = asyncio.Queue(), {}, {}
         self.blocks, self.stop, self.used, self.closed = {}, None, time.monotonic(), False
@@ -462,7 +467,7 @@ class ClaudeSession:
             elif event[0] in ("pause", "done"):
                 break
         if event[0] == "done":
-            ClaudeSession.idle[(self.key, hashlib.sha256(reply.strip().encode()).hexdigest())] = self
+            ClaudeSession.idle[(self.key, self.said, hashlib.sha256(reply.strip().encode()).hexdigest())] = self
         self.used = time.monotonic()
         cached = usage.get("cache_read_input_tokens", 0)
         prompt = usage.get("input_tokens", 0) + cached + usage.get("cache_creation_input_tokens", 0)
@@ -510,7 +515,9 @@ async def claude(model, body):
         before = convo[-tail_users - 1] if news and tail_users < len(convo) else None
         key = None
         if before and before[0] == "assistant":
-            key = (fingerprint(model, system, tools), hashlib.sha256(plain(before[1]).strip().encode()).hexdigest())
+            # The user's side too, so two conversations that were given the same reply keep their own sessions.
+            key = (fingerprint(model, system, tools), said(convo[:len(convo) - tail_users]),
+                   hashlib.sha256(plain(before[1]).strip().encode()).hexdigest())
         session = ClaudeSession.idle.pop(key, None) if key else None
         if session and not session.closed:
             route, run = "continued", {"send": news}
@@ -520,6 +527,10 @@ async def claude(model, body):
             route, run = f"fresh, {len(convo)} entries", {"send": transcript(convo)}
     log(f"  anthropic/{model}: {route}")
     async with session.lock:
+        # Two requests carrying the same results can both find the paused session; only the first hands them back.
+        if route == "resumed" and any(ClaudeSession.paused.get(e[1]) is not session for e in tail):
+            raise Refused(409, "those tool results were already handed back by another request")
+        session.said = said(convo)
         async for e in session.turn(emitter, **run):
             yield e
 
@@ -638,6 +649,7 @@ class ChatWriter:
     def __init__(self, model):
         self.id, self.model, self.created = new_id("chatcmpl"), model, int(time.time())
         self.calls, self.text, self.reasoning, self.usage, self.finish = [], "", "", None, "stop"
+        self.slots = {}  # a call's item id -> its index in calls, as parallel calls' deltas may interleave
 
     def chunk(self, delta, finish=None):
         return {"id": self.id, "object": "chat.completion.chunk", "created": self.created, "model": self.model,
@@ -653,14 +665,15 @@ class ChatWriter:
             return [self.chunk({"reasoning_content": e["delta"]})]
         if kind == "response.output_item.added" and e["item"].get("type") == "function_call":
             item = e["item"]
+            self.slots[item.get("id")] = len(self.calls)
             self.calls.append({"id": item["call_id"], "type": "function",
                                "function": {"name": item["name"], "arguments": ""}})
             return [self.chunk({"tool_calls": [{"index": len(self.calls) - 1, "id": item["call_id"], "type": "function",
                                                 "function": {"name": item["name"], "arguments": ""}}]})]
         if kind == "response.function_call_arguments.delta" and self.calls:
-            self.calls[-1]["function"]["arguments"] += e["delta"]
-            return [self.chunk({"tool_calls": [{"index": len(self.calls) - 1,
-                                                "function": {"arguments": e["delta"]}}]})]
+            slot = self.slots.get(e.get("item_id"), len(self.calls) - 1)
+            self.calls[slot]["function"]["arguments"] += e["delta"]
+            return [self.chunk({"tool_calls": [{"index": slot, "function": {"arguments": e["delta"]}}]})]
         if kind in ("response.completed", "response.incomplete"):
             u = e["response"].get("usage") or {}
             self.usage = {"prompt_tokens": u.get("input_tokens", 0), "completion_tokens": u.get("output_tokens", 0),
@@ -734,6 +747,17 @@ def keyed(key):
     return check
 
 
+async def json_body(request):
+    """The request's JSON object, or a 400 for a body that is not one."""
+    try:
+        body = await request.json()
+    except ValueError:
+        raise Refused(400, "the request body is not JSON")
+    if not isinstance(body, dict):
+        raise Refused(400, "the request body is not a JSON object")
+    return body
+
+
 async def sse(request):
     reply = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
     await reply.prepare(request)
@@ -742,7 +766,11 @@ async def sse(request):
 
 async def responses(request):
     started = time.monotonic()
-    body = await request.json()
+    try:
+        body = await json_body(request)
+    except Refused as e:
+        log(f"POST {request.path} refused {e.status}: {e}")
+        return refusal(e.status, str(e))
     trace("responses", body)
     log(f"POST /v1/responses {body.get('model')} stream={bool(body.get('stream'))}")
     try:
@@ -791,7 +819,11 @@ async def responses(request):
 
 async def chat(request):
     started = time.monotonic()
-    body = await request.json()
+    try:
+        body = await json_body(request)
+    except Refused as e:
+        log(f"POST {request.path} refused {e.status}: {e}")
+        return refusal(e.status, str(e))
     trace("chat", body)
     log(f"POST /v1/chat/completions {body.get('model')} stream={bool(body.get('stream'))}")
     writer = ChatWriter(body.get("model"))
@@ -830,10 +862,18 @@ async def chat(request):
     return reply
 
 
+TERMINAL = ("response.completed", "response.incomplete", "response.failed")
+
+
 async def _chain(head, rest):
+    """HEAD, then the rest; a stream that ends without saying it finished is a failure, not a short answer."""
     yield head
+    ended = head.get("type") in TERMINAL
     async for e in rest:
+        ended = ended or e.get("type") in TERMINAL
         yield e
+    if not ended:
+        raise Refused(502, "the model's stream ended before the response was finished")
 
 
 async def models(request):
