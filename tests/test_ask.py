@@ -249,13 +249,15 @@ def test_lmg_hands_each_group_the_rest_of_the_line(monkeypatch):
     monkeypatch.setattr(usage, "main", lambda argv: seen.append(("usage", argv)) or 0)
     monkeypatch.setattr(plan, "main", lambda argv: seen.append(("plan", argv)) or 0)
     monkeypatch.setattr(pace, "main", lambda argv: seen.append(("pace", argv)) or 0)
+    monkeypatch.setattr(plan, "worth", lambda argv: seen.append(("worth", argv)) or 0)
     assert cli.main(["proxy", "status", "--port", "9"]) == 0
     assert cli.main(["ask", "list"]) == 0
     assert cli.main(["usage", "before: session x"]) == 0
     assert cli.main(["usage", "plan", "--hours", "1"]) == 0
     assert cli.main(["usage", "pace", "--brief"]) == 0
+    assert cli.main(["usage", "worth"]) == 0
     assert seen == [("proxy", ["status", "--port", "9"]), ("ask", ["list"], False), ("usage", ["before: session x"]),
-                    ("plan", ["--hours", "1"]), ("pace", ["--brief"])]
+                    ("plan", ["--hours", "1"]), ("pace", ["--brief"]), ("worth", [])]
     assert cli.main(["askai"]) == 2
 
 

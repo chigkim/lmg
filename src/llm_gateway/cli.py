@@ -5,6 +5,7 @@
     lmg usage [NOTE]                             each plan's windows, and a ledger row with a note: usage.py
     lmg usage plan ...                           every call each plan was spent on: plan.py
     lmg usage pace ...                           what a kind of task costs, and how many more fit: pace.py
+    lmg usage worth                              what each window is worth in dollars: plan.py
 
 Each form's own options follow its words; `lmg proxy --help` and `lmg ask --help` list them.
 """
@@ -32,6 +33,9 @@ def main(argv=None):
         if rest and rest[0] == "pace":
             from . import pace
             return pace.main(rest[1:])
+        if rest and rest[0] == "worth":
+            from . import plan
+            return plan.worth(rest[1:])
         from . import usage
         return usage.main(rest)
     print(f"unknown {group}: proxy, ask or usage", file=sys.stderr)
