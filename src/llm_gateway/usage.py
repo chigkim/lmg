@@ -419,7 +419,7 @@ def shown(report):
             group = row.strip().removesuffix(" Models").removesuffix(" models")
         elif isinstance(row, Window):
             rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%",
-                         f"{when(row.resets)}, in {span(row.resets - time.time())}"])
+                         f"in {span(row.resets - time.time())}, at {when(row.resets)}"])
         else:
             said.append(f"{plan}: {row.strip()}")
     table_lines = table(["window", "left", "spare", "resets"], rows, text=(0, 3)) if rows else []
