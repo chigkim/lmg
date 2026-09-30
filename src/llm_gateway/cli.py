@@ -7,7 +7,7 @@
     lmg usage pace ...                           what a kind of task costs, and how many more fit: pace.py
     lmg usage worth                              what each window is worth in dollars: calls.py
 
-Each form's own options follow its words; `lmg proxy --help` and `lmg ask --help` list them.
+Each form's own options follow its words; `lmg proxy --help`, `lmg ask --help` and `lmg usage --help` list them.
 """
 import sys
 

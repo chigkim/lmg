@@ -188,3 +188,10 @@ def test_the_claude_opener_follows_no_redirect():
 def test_what_could_not_be_read_is_named_for_its_plan():
     report = ["Now", "Claude", usage.line("5h limit:", 10, time.time() + 60), "Codex", "  could not ask: gone"]
     assert usage.unread(report) == ["Codex: could not ask: gone"]
+
+
+def test_usage_help_names_every_form_and_reads_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(usage, "asked", lambda: pytest.fail("help read the plans"))
+    assert usage.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert all(f"lmg usage {form}" in out for form in ("calls", "pace", "worth"))

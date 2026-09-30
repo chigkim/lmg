@@ -105,3 +105,12 @@ def test_pace_toml_that_is_not_toml_is_said_not_a_traceback(tmp_path):
     path.write_text("[paced\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="pace.toml"):
         pace.paced(path)
+
+
+def test_pace_takes_help_and_refuses_an_option_it_has_not(capsys):
+    with pytest.raises(SystemExit) as done:
+        pace.main(["--help"])
+    assert done.value.code == 0 and "--brief" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as done:
+        pace.main(["--bogus"])
+    assert done.value.code == 2

@@ -33,7 +33,6 @@ import json
 import pathlib
 import re
 import sqlite3
-import sys
 
 from . import usage
 
@@ -45,6 +44,8 @@ AGY_MODELS = {1318: "gemini-3.8-flash-high", 1319: "gemini-3.8-flash-medium", 13
               1298: "gemini-3.7-flash-high", 1020: "gemini-3.5-flash-low"}
 
 ENTRYPOINTS = {"cli": "claude code", "sdk-ts": "pi bridge", "sdk-cli": "claude -p"}
+# Codex's originators, named as Claude's entry points are: the interactive CLI, under its old name and its new, and exec.
+ORIGINATORS = {"codex_cli_rs": "codex", "codex-tui": "codex", "codex_exec": "codex exec"}
 Call = collections.namedtuple("Call", "time plan source model input cache_read cache_write cache_write_1h output")
 
 
@@ -104,7 +105,8 @@ def codex(since):
             if not any(rise.values()):
                 continue
             # input_tokens is the whole prompt, cached reads and cache writes included, so both come out of it.
-            out.append(Call(when(row["timestamp"]), "codex", meta[path].get("originator", "codex"), model.get(path, "?"),
+            out.append(Call(when(row["timestamp"]), "codex", ORIGINATORS.get(meta[path].get("originator"), meta[path].get("originator", "codex")),
+                            model.get(path, "?"),
                             rise["input_tokens"] - rise["cached_input_tokens"] - rise["cache_write_input_tokens"],
                             rise["cached_input_tokens"],
                             rise["cache_write_input_tokens"], 0, rise["output_tokens"]))
@@ -423,9 +425,8 @@ def per_point(ledger, calls, plan, kind, table):
 
 def worth(argv=()):
     """`lmg usage worth`: each window in API dollars, the whole of it and what has gone since it opened."""
-    if argv:
-        print(f"lmg usage worth takes no options, not {' '.join(argv)}", file=sys.stderr)
-        return 2
+    parser = argparse.ArgumentParser(prog="lmg usage worth", description="Each window in public-API dollars: the whole of it, and what has gone since it opened.")
+    parser.parse_args(argv)
     table = prices()
     report = usage.asked()
     now = usage.windows(report)
@@ -472,13 +473,31 @@ def worth(argv=()):
         print("\n" + "\n".join(unread))
 
 
+def hours(text):
+    """--hours: a number above nought, which argparse reports as a usage error otherwise."""
+    try:
+        value = float(text)
+    except ValueError:
+        value = 0
+    if not value > 0:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number of hours above nought")
+    return value
+
+
+def local_time(text):
+    """--since: 'YYYY-MM-DD HH:MM', local time, as a timestamp; argparse names the mistake instead of a traceback."""
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M").timestamp()
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not 'YYYY-MM-DD HH:MM'")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="lmg usage calls", description=__doc__.splitlines()[0])
-    parser.add_argument("--hours", type=float, default=5)
-    parser.add_argument("--since", help="YYYY-MM-DD HH:MM, local time; overrides --hours")
+    parser.add_argument("--hours", type=hours, default=5, help="the calls of the last so many hours, 5 unless given")
+    parser.add_argument("--since", type=local_time, help="'YYYY-MM-DD HH:MM', local time; overrides --hours")
     args = parser.parse_args(argv)
     table = prices()
-    since = (datetime.datetime.strptime(args.since, "%Y-%m-%d %H:%M").timestamp() if args.since
-             else datetime.datetime.now().timestamp() - args.hours * 3600)
+    since = args.since or datetime.datetime.now().timestamp() - args.hours * 3600
     report(since, table)
 

@@ -338,6 +338,9 @@ def main(argv=None):
     rather than written to the ledger as a note.
     """
     note = " ".join(sys.argv[1:] if argv is None else argv)
+    if note in ("-h", "--help"):
+        print(HELP)
+        return 0
     if note and not NOTE.match(note):
         print(f"lmg usage: {note!r} is not a note or a form of lmg usage. A note is 'word: what',"
               " as 'before: session x'; the forms are calls, pace and worth.", file=sys.stderr)
@@ -346,6 +349,17 @@ def main(argv=None):
     print("\n".join(shown(report)))
     if note:
         record(note, report)
+
+
+HELP = """\
+lmg usage [NOTE]                   every plan's windows: % left, spare against even pace, when each resets
+lmg usage calls [--hours N | --since 'YYYY-MM-DD HH:MM']
+                                   every call each plan was spent on, and its public-API dollars
+lmg usage pace [--fresh] [--brief] what each kind of task costs a window, and how many more fit
+lmg usage worth                    what each window is worth in public-API dollars
+
+A NOTE is 'word: what'. It also adds the reading to the ledger: 'before: NAME' and 'after: NAME' around a task
+are what lmg usage pace pairs, and NAME's first word is the task's kind. Each form takes --help."""
 
 
 # A ledger note: a word, a colon, and what it is about.

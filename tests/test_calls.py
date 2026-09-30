@@ -81,3 +81,34 @@ def test_a_window_not_yet_started_is_one_stretch_with_the_fall_after_it():
               {"time": "2026-09-27 10:40:00", "claude_5h_left": "93", "claude_5h_reset": "2026-09-27 15:20:00"}]
     inside = call("gpt-6-sol", input=100_000, time=calls.stamp("2026-09-27 10:30:00"), name="claude")
     assert calls.per_point(ledger, [inside], "claude", "5h", RATES) == (7, pytest.approx(0.2))
+
+
+@pytest.mark.parametrize("originator, source", [("codex_exec", "codex exec"), ("codex_cli_rs", "codex"),
+                                                ("codex-tui", "codex"), ("something_new", "something_new")])
+def test_a_codex_source_is_named_as_claude_s_are(tmp_path, monkeypatch, originator, source):
+    folder = tmp_path / ".codex/sessions"
+    folder.mkdir(parents=True)
+    (folder / "rollout-a.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"type": "session_meta", "payload": {"model_provider": "openai", "originator": originator}},
+        {"timestamp": "2026-09-27T10:00:00Z",
+         "payload": {"type": "token_count", "info": {"total_token_usage": {"output_tokens": 5}}}}]), encoding="utf-8")
+    monkeypatch.setattr(calls, "HOME", tmp_path)
+    [c] = calls.codex(0)
+    assert c.source == source
+
+
+@pytest.mark.parametrize("argv, said", [(["--hours", "-3"], "above nought"), (["--hours", "x"], "above nought"),
+                                        (["--since", "yesterday"], "is not 'YYYY-MM-DD HH:MM'")])
+def test_calls_names_a_bad_option_instead_of_a_traceback(argv, said, capsys):
+    with pytest.raises(SystemExit) as done:
+        calls.main(argv)
+    assert done.value.code == 2 and said in capsys.readouterr().err
+
+
+def test_worth_takes_help_and_refuses_anything_else(capsys):
+    with pytest.raises(SystemExit) as done:
+        calls.worth(["--help"])
+    assert done.value.code == 0 and "public-API dollars" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as done:
+        calls.worth(["x"])
+    assert done.value.code == 2

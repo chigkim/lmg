@@ -161,8 +161,12 @@ def percent(points):
 
 
 def main(argv=None):
-    argv = sys.argv[1:] if argv is None else argv
-    if "--fresh" in argv:
+    import argparse
+    parser = argparse.ArgumentParser(prog="lmg usage pace", description=__doc__.splitlines()[0])
+    parser.add_argument("--fresh", action="store_true", help="take a reading first, as the note 'reading: pace'")
+    parser.add_argument("--brief", action="store_true", help="costs and room, without the table of every task")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if args.fresh:
         usage.record("reading: pace", usage.asked())
     if not usage.LEDGER.exists():
         print(f"no ledger yet at {usage.LEDGER}; run with --fresh, or lmg usage with a note")
@@ -172,7 +176,7 @@ def main(argv=None):
     done = tasks(rows)
     if not PACED:
         print(f"no {usage.DATA / 'pace.toml'}, so no kind of task is costed or paced\n")
-    if "--brief" not in argv:
+    if not args.brief:
         # A window no row has read is left out: Claude's plan, for one, may have no weekly window.
         shown = [w for w in WINDOWS if any(row[f"{w}_left"] for row in rows)]
         print("every task in the ledger")
