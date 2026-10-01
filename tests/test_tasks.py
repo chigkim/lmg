@@ -163,3 +163,42 @@ def test_a_ledger_missing_a_column_is_listed_rather_than_a_traceback(tmp_path, m
 def test_an_empty_ledger_is_said(tmp_path, monkeypatch, capsys):
     ledger_of(tmp_path, monkeypatch, [])
     assert tasks.main([]) == 0 and "no task in the ledger yet" in capsys.readouterr().out
+
+
+def test_a_task_with_no_after_counts_as_running_beside_the_tasks_it_overlaps():
+    rows = [row("2026-09-27 10:00", "before: codex a", codex_week=80),
+            row("2026-09-27 10:05", "before: codex dead", codex_week=80),
+            row("2026-09-27 10:05", "before: agy c", agy_week=50),
+            row("2026-09-27 10:30", "after: codex a", codex_week=78),
+            row("2026-09-27 10:40", "after: agy c", agy_week=49),
+            row("2026-09-27 11:00", "before: codex dead", codex_week=78),
+            row("2026-09-27 11:20", "after: codex dead", codex_week=77),
+            row("2026-09-27 12:00", "before: codex b", codex_week=77),
+            row("2026-09-27 12:10", "after: codex b", codex_week=76)]
+    # The first `codex dead` never finished: it ran from 10:05 until its name started again at 11:00, beside
+    # `codex a` on Codex; `agy c` spent another plan, and `codex b` ran after it had ended.
+    assert {name: shared for name, _, _, shared in tasks.paired(rows)} == {
+        "codex a": True, "agy c": False, "codex dead": False, "codex b": False}
+
+
+def test_a_task_still_running_marks_a_task_beside_it_and_a_name_that_is_no_plan_marks_every_plan():
+    now = tasks.moment("2026-09-27 11:00")
+    beside_codex = [row("2026-09-27 10:00", "before: codex open", codex_week=80),
+                    row("2026-09-27 10:05", "before: codex a", codex_week=80),
+                    row("2026-09-27 10:20", "after: codex a", codex_week=79)]
+    beside_pi = [row("2026-09-27 10:00", "before: pi x", claude_5h=80),
+                 row("2026-09-27 10:05", "before: agy a", agy_week=50),
+                 row("2026-09-27 10:20", "after: agy a", agy_week=49)]
+    assert [shared for *_, shared in tasks.paired(beside_codex, now)] == [True]
+    assert [shared for *_, shared in tasks.paired(beside_pi, now)] == [True]
+
+
+def test_a_task_with_no_after_is_not_taken_to_outrun_the_longest_task_that_finished():
+    rows = [row("2026-09-27 10:00", "before: codex dead", codex_week=80),
+            row("2026-09-27 10:00", "before: codex a", codex_week=80),
+            row("2026-09-27 10:30", "after: codex a", codex_week=79),
+            row("2026-09-28 10:00", "before: codex b", codex_week=70),
+            row("2026-09-28 10:10", "after: codex b", codex_week=69)]
+    # `codex dead` ran beside `codex a`, but a day later it is no longer taken to be running.
+    assert {name: shared for name, _, _, shared in tasks.paired(rows, tasks.moment("2026-09-29 00:00"))} == {
+        "codex a": True, "codex b": False}

@@ -324,6 +324,31 @@ def numbered(folder, name):
     return n
 
 
+def reserved(folder, name, prompt):
+    """The first free run number of job NAME, claimed by writing PROMPT as its task copy in one exclusive create, so
+    two runs of one job started at once cannot take the same number and write over each other's records."""
+    n = numbered(folder, name)
+    while True:
+        try:
+            with task_copy(folder, name, n).open("xb") as copy:
+                copy.write(prompt)
+            return n
+        except FileExistsError:
+            n += 1
+
+
+def claimed(folder, stem):
+    """The first FOLDER/STEM-N.jsonl free, made empty in one exclusive create so a review started beside it cannot
+    take the same N; the N."""
+    n = 1
+    while True:
+        try:
+            (folder / f"{stem}-{n}.jsonl").open("xb").close()
+            return n
+        except FileExistsError:
+            n += 1
+
+
 def paired():
     """What makes a job's two readings a pair: this process's pid, which no job running beside it shares, so two
     jobs of one name at once, in two repositories, are not paired with each other's readings."""
@@ -436,6 +461,9 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
     prompt = pathlib.Path(prompt).resolve()
     if not prompt.is_file():
         raise Problem(f"no prompt file {prompt}")
+    # The prompt is moved in over TASK.md: a tracked one would be overwritten, and its change taken for the job's.
+    if git("ls-files", "--error-unmatch", "TASK.md", cwd=repo).returncode == 0:
+        raise Problem(f"{repo} tracks a TASK.md of its own, which a job's prompt would be written over")
     installed(harness)
     name = job_name(prompt)
     tree = home / "worktrees" / f"{harness}-{name}"
@@ -448,8 +476,7 @@ def job(harness, mode, prompt, resume, repo, home, model, timeout):
     if fresh:
         make(repo, tree)
     runs.mkdir(parents=True, exist_ok=True)
-    n = numbered(runs, name)
-    task_copy(runs, name, n).write_bytes(prompt.read_bytes())
+    n = reserved(runs, name, prompt.read_bytes())
     shutil.move(prompt, tree / "TASK.md")  # os.replace cannot cross drives
     # Each path is named whole: with_suffix would take a dot in the job's name for the start of a suffix.
     answer, raw, log = (runs / f"{name}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
@@ -497,10 +524,8 @@ def review(sha, repo, home, model):
     sha = found.stdout.strip()[:12]
     runs = home / "runs" / "codex"
     runs.mkdir(parents=True, exist_ok=True)
-    n = 1
     # By the raw output, which every run writes; codex writes the answer only when it finishes.
-    while (runs / f"review-{sha}-{n}.jsonl").exists():
-        n += 1
+    n = claimed(runs, f"review-{sha}")
     answer, raw, log = (runs / f"review-{sha}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
     note = f"codex review {sha}" + paired()
     reading("before", note)
@@ -538,9 +563,9 @@ def child_usage(thread, since, sessions=None):
 
 
 def changes(tree):
-    """TREE's uncommitted changes, TASK.md left out, as `git status --porcelain` lines."""
-    return [line for line in checked("status", "--porcelain", cwd=tree).splitlines()
-            if line[3:] != "TASK.md"]
+    """TREE's uncommitted changes, the untracked TASK.md the prompt was moved in as left out, as `git status
+    --porcelain` lines. A repository that tracks a TASK.md of its own is refused a job (`job`), so this one is ours."""
+    return [line for line in checked("status", "--porcelain", cwd=tree).splitlines() if line != "?? TASK.md"]
 
 
 def made(tree, repo):

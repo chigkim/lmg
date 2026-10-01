@@ -11,6 +11,7 @@ found from this file rather than the working directory, so `stop` and `status` w
 folder `start` was run from, and reads config.toml and .env there.
 """
 import argparse
+import contextlib
 import os
 import pathlib
 import signal
@@ -19,6 +20,8 @@ import subprocess
 import sys
 import time
 
+from .usage import locked
+
 STATE = pathlib.Path(__file__).resolve().parents[2] / "logs"   # src/llm_gateway/daemon.py -> the project
 READY = 30                   # seconds `start` waits for the port to answer
 WINDOWS = sys.platform == "win32"
@@ -26,6 +29,15 @@ WINDOWS = sys.platform == "win32"
 
 def pid_file(port):
     return STATE / f"{port}.pid"
+
+
+@contextlib.contextmanager
+def serialized(port):
+    """One start or stop on PORT at a time: two at once could each find no gateway, start one apiece, and leave the
+    pid file naming the one that lost the port, so the one serving could not be stopped."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    with open(STATE / f"{port}.lock", "ab") as handle, locked(handle):
+        yield
 
 
 def log_file(port):
@@ -114,6 +126,11 @@ def spawn(argv, out):
 
 
 def start(args):
+    with serialized(args.port):
+        return started(args)
+
+
+def started(args):
     pid = running(args.port)
     if pid:
         print(f"already running on port {args.port}, pid {pid}")
@@ -162,6 +179,11 @@ def kill(pid):
 
 
 def stop(args):
+    with serialized(args.port):
+        return stopped(args)
+
+
+def stopped(args):
     pid = running(args.port)
     if not pid:
         print(f"not running on port {args.port}")

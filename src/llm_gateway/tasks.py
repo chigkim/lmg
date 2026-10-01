@@ -18,7 +18,11 @@ and is left out rather than counted as a gain. Spending elsewhere can still
 fall inside a task's own two readings, so the cost on a harness leaves out its
 dearest task once there are five (`typical`); a task another task here
 overlapped on a plan both spent is marked `shared` and left out, since the two
-cannot be told apart.
+cannot be told apart. A `before` with no `after` is a task still running or one
+that died: it counts as running until its name starts again, until now, or for
+as long as the longest task here took, whichever comes first, on its own plan
+or on every plan for a name that is none, so a task beside it is marked
+`shared` too.
 
 The tasks a window can run are what it has left over what one task costs it.
 A weekly window reads in whole points and one task rarely moves it, so a
@@ -28,7 +32,7 @@ each cost under the meter's 1%, so at least as many as the points left.
 import csv
 import statistics
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import usage
 
@@ -149,27 +153,35 @@ def whole(ratio):
     return int(round(ratio, 9))
 
 
-def paired(rows):
+def paired(rows, now=None):
     """(name, minutes, {window: points used}, shared) per paired task. Shared is an overlap with a task that spent
     a plan this one spent, whose points the two readings cannot tell apart; a codex job running beside an agy job
     spends another plan and leaves the codex job's figure its own. A ledger missing a window's columns, as an older
     layout or a hand edit may, has no figure for it."""
-    open_, pairs = {}, []
+    open_, pairs, unpaired = {}, [], []
     for row in rows:
         side, _, name = row["note"].partition(": ")
         if side == "before":
+            if name in open_:  # started again with no after: the first ran no later than this
+                unpaired.append((name, moment(open_[name]["time"]), moment(row["time"])))
             open_[name] = row
         elif side == "after" and name in open_:
             before = open_.pop(name)
             used = {}
             for window in WINDOWS:
-                was, now = before.get(f"{window}_left"), row.get(f"{window}_left")
-                if was and now and int(was) >= int(now) and same_window(before, row, window):
-                    used[window] = int(was) - int(now)
+                was, is_ = before.get(f"{window}_left"), row.get(f"{window}_left")
+                if was and is_ and int(was) >= int(is_) and same_window(before, row, window):
+                    used[window] = int(was) - int(is_)
             pairs.append((name, moment(before["time"]), moment(row["time"]), used))
+    unpaired += [(name, moment(row["time"]), now or datetime.now()) for name, row in open_.items()]
     plans = [spends(name, used) for name, _, _, used in pairs]
+    # A task that died years ago is not running beside today's: none is taken to outrun the longest that finished.
+    longest = max((end - start for _, start, end, _ in pairs), default=timedelta(0))
+    # What an unpaired task spent was never read, so a name that is no plan's is taken to spend them all.
+    running = [(spends(name, {}) or set(PLANS), s, min(e, s + longest)) for name, s, e in unpaired]
     return [(name, (end - start).total_seconds() / 60, used,
-             any(s < end and start < e and plans[i] & plans[j] for j, (_, s, e, _) in enumerate(pairs) if j != i))
+             any(s < end and start < e and plans[i] & plans[j] for j, (_, s, e, _) in enumerate(pairs) if j != i)
+             or any(s < end and start < e and plans[i] & spent for spent, s, e in running))
             for i, (name, start, end, used) in enumerate(pairs)]
 
 

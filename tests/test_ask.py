@@ -506,3 +506,43 @@ def test_a_read_job_that_left_work_keeps_its_worktree(repo, tmp_path, monkeypatc
     (tmp_path / "look-prompt.md").write_text("look")
     _, _, cleanup = ask.job("claude", "read", tmp_path / "look-prompt.md", None, repo, tmp_path, "m", "3600s")
     assert cleanup == ("claude", "look") and (tmp_path / "worktrees" / "claude-look" / "notes.txt").exists()
+
+
+def test_runs_of_one_job_started_at_once_each_claim_a_number_of_their_own(tmp_path):
+    out = []
+    threads = [threading.Thread(target=lambda n=n: out.append(ask.reserved(tmp_path, "x", str(n).encode())))
+               for n in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(out) == list(range(1, 9))
+    assert {ask.task_copy(tmp_path, "x", n).read_text() for n in out} == {str(n) for n in range(8)}
+    assert [ask.claimed(tmp_path, "review-s") for _ in range(3)] == [1, 2, 3]
+
+
+def test_a_repository_that_tracks_a_task_md_is_refused_a_job(repo, tmp_path, monkeypatch):
+    fake_harness(monkeypatch, tmp_path)
+    (repo / "TASK.md").write_text("ours")
+    git("add", "TASK.md", cwd=repo)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "t", cwd=repo)
+    (tmp_path / "x-prompt.md").write_text("the task")
+    with pytest.raises(ask.Problem, match="tracks a TASK.md"):
+        ask.job("claude", "read", tmp_path / "x-prompt.md", None, repo, tmp_path, "m", "3600s")
+
+
+def test_a_start_and_a_stop_on_one_port_wait_for_each_other(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon, "STATE", tmp_path)
+    order = []
+
+    def held(name):
+        with daemon.serialized(8000):
+            order.append(f"{name} in")
+            threading.Event().wait(0.2)
+            order.append(f"{name} out")
+    threads = [threading.Thread(target=held, args=(n,)) for n in "ab"]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert [o.split()[1] for o in order] == ["in", "out", "in", "out"]
