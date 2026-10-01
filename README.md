@@ -117,7 +117,7 @@ On the Claude side the Agent SDK only accepts tools as MCP tools, so the gateway
 
 ### Images
 
-Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a remote image and sends it as base64.
+Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a remote image and sends it as base64. It fetches only from the public internet: a URL must be `http` or `https`, a host that is or resolves to a loopback, private, link-local or other non-public address is refused, each redirect is checked again up to five, and an image over 20 MB is refused. A tool result whose image cannot be fetched is refused with the session still waiting on that call, so the client can send it again.
 
 ### Credentials
 
@@ -261,7 +261,7 @@ Between two ledger rows where a window's figure fell, the calls made are what th
 A plan's limit counts every call made on it, by whatever made it, so both read every record the clients leave:
 
 - Claude: `~/.claude/projects`, Claude Code's transcripts, including calls made through Pi's claude-bridge.
-- Codex: `~/.codex/sessions`, and Pi's `openai-codex` provider in `~/.pi/agent/sessions`.
+- Codex: `~/.codex/sessions` (or `$CODEX_HOME/sessions`), and Pi's `openai-codex` provider in `~/.pi/agent/sessions`.
 - agy: `~/.gemini/antigravity-cli/conversations`.
 - Pi's compactions and pi-hermes-memory's reviews, which are estimated where nothing records them and marked `(est.)`.
 

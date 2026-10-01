@@ -242,3 +242,89 @@ def test_the_system_prompt_reaches_claude_in_a_file_that_lasts_as_long_as_the_se
     a, b = asyncio.run(sessions())
     assert seen == {str(a.prompt): long, str(b.prompt): "other"}  # two at once, a file each
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "http://127.0.0.1/a.png", "http://10.0.0.5/a.png",
+                                 "http://[::1]/a.png", "http://169.254.169.254/latest/meta-data"])
+def test_an_image_url_off_the_public_internet_is_refused_before_it_is_fetched(url):
+    with pytest.raises(gateway.Refused) as refusal:
+        asyncio.run(gateway.downloaded(url))
+    assert refusal.value.status == 400
+
+
+def test_a_name_resolves_to_its_public_addresses_only(monkeypatch):
+    found = {"private": ["127.0.0.1", "192.168.1.9"], "mixed": ["10.1.1.1", "93.184.216.34"]}
+
+    async def resolved(self, host, port=0, family=0):
+        return [{"hostname": host, "host": a, "port": port, "family": family, "proto": 0, "flags": 0}
+                for a in found[host]]
+    monkeypatch.setattr(aiohttp.ThreadedResolver, "resolve", resolved)
+    resolver = gateway.PublicResolver.__new__(gateway.PublicResolver)
+    assert [r["host"] for r in asyncio.run(resolver.resolve("mixed"))] == ["93.184.216.34"]
+    with pytest.raises(OSError):
+        asyncio.run(resolver.resolve("private"))
+
+
+def test_an_image_download_is_capped_and_its_redirects_are_checked(monkeypatch):
+    monkeypatch.setattr(gateway, "IMAGE_BYTES", 10)
+    def image(body):
+        async def handler(request):
+            return web.Response(body=body, content_type="image/png")
+        return handler
+
+    def moved(to):
+        async def handler(request):
+            raise web.HTTPFound(to)
+        return handler
+
+    app = web.Application()
+    app.add_routes([web.get("/small", image(b"12345")), web.get("/big", image(b"x" * 11)),
+                    web.get("/hop", moved("/small")), web.get("/loop", moved("/loop")),
+                    web.get("/inside", moved("http://127.0.0.1/secret"))])
+
+    async def fetch(*paths):
+        async with test_utils.TestServer(app) as server:
+            # By name, which the checks pass and an ordinary session resolves to the test server.
+            gateway.IMAGES = aiohttp.ClientSession()
+            try:
+                out = []
+                for path in paths:
+                    try:
+                        out.append(await gateway.downloaded(f"http://localhost:{server.port}{path}"))
+                    except gateway.Refused as e:
+                        out.append(str(e))
+                return out
+            finally:
+                await gateway.IMAGES.close()
+
+    small, big, hop, loop, inside = asyncio.run(fetch("/small", "/big", "/hop", "/loop", "/inside"))
+    assert small == hop == ("image/png", "MTIzNDU=")
+    assert "over" in big and "redirected more than" in loop and "not on a public address" in inside
+
+
+def test_a_tool_result_whose_image_fails_leaves_the_session_paused_for_a_retry(monkeypatch):
+    async def failing(parts):
+        raise gateway.Refused(400, "an image at example.com answered 404")
+    monkeypatch.setattr(gateway, "fetched", failing)
+    monkeypatch.setattr(gateway.ClaudeSession, "paused", {})
+
+    async def retried():
+        session = gateway.ClaudeSession.__new__(gateway.ClaudeSession)
+        session.ready, session.closed, session.events = asyncio.Event(), False, asyncio.Queue()
+        session.ready.set()
+        future = asyncio.get_running_loop().create_future()
+        session.futures = {"call_1": future}
+        gateway.ClaudeSession.paused["call_1"] = session
+        with pytest.raises(gateway.Refused):
+            async for _ in session.turn(gateway.Emitter("anthropic/sonnet"), results={"call_1": []}):
+                pass
+        return session, future
+
+    session, future = asyncio.run(retried())
+    assert gateway.ClaudeSession.paused == {"call_1": session} and not future.done()
+
+
+def test_two_conversations_alike_but_for_an_image_are_two_conversations():
+    def with_image(url):
+        return [("user", [{"type": "text", "text": "what is this?"}, {"type": "image", "url": url}])]
+    assert gateway.said(with_image("data:image/png;base64,AAA")) != gateway.said(with_image("data:image/png;base64,BBB"))

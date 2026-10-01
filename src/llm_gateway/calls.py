@@ -30,6 +30,7 @@ import collections
 import csv
 import datetime
 import json
+import os
 import pathlib
 import re
 import sqlite3
@@ -54,9 +55,14 @@ def when(stamp):
     return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
 
 
-def lines(pattern, since):
-    """Every JSON line of the files matching pattern under ~ that were written to after since."""
-    for path in HOME.glob(pattern):
+def codex_home():
+    """Codex's own folder: CODEX_HOME when it is set, as Codex itself reads it, and ~/.codex otherwise."""
+    return pathlib.Path(os.environ.get("CODEX_HOME") or HOME / ".codex")
+
+
+def lines(root, pattern, since):
+    """Every JSON line of the files matching pattern under root that were written to after since."""
+    for path in root.glob(pattern):
         if path.stat().st_mtime < since:
             continue
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -71,7 +77,7 @@ def lines(pattern, since):
 
 def claude(since):
     calls = {}
-    for _, row in lines(".claude/projects/**/*.jsonl", since):
+    for _, row in lines(HOME, ".claude/projects/**/*.jsonl", since):
         message = row.get("message")
         if not isinstance(message, dict) or "usage" not in message or not str(message.get("model", "")).startswith("claude-"):
             continue
@@ -89,7 +95,7 @@ def claude(since):
 
 def codex(since):
     out, last, meta, model = [], {}, {}, {}
-    for path, row in lines(".codex/sessions/**/rollout-*.jsonl", since):
+    for path, row in lines(codex_home(), "sessions/**/rollout-*.jsonl", since):
         payload = row.get("payload") or {}
         if row.get("type") == "session_meta":
             meta[path] = payload
@@ -210,7 +216,7 @@ def pi(since):
     # Sessions nest (a task's own sessions sit a folder down), and a fork copies the history it was forked from into
     # its own file, 138 calls by 2026-09-27; so a call or a compaction is counted once, by response id and time.
     counted = set()
-    for path, row in lines(".pi/agent/sessions/**/*.jsonl", since):
+    for path, row in lines(HOME, ".pi/agent/sessions/**/*.jsonl", since):
         message = row.get("message")
         if row.get("type") == "model_change":
             current[path] = row.get("provider"), row.get("modelId")

@@ -29,11 +29,13 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import pathlib
 import secrets
 import shutil
+import socket
 import sys
 import tempfile
 import time
@@ -52,6 +54,8 @@ SERVER = "c"                 # the SDK names a tool mcp__SERVER__NAME
 PREFIX = f"mcp__{SERVER}__"
 IDLE = 30 * 60               # seconds a Claude session is kept with nobody using it
 CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
+IMAGE_BYTES = 20 * 1024 * 1024  # the most an image URL may download
+REDIRECTS = 5                   # how many an image URL may take before it is refused
 # Fields the Codex backend accepts; it refuses others (temperature, max_output_tokens, ...).
 CODEX_FIELDS = {"model", "instructions", "input", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "text",
                 "include", "prompt_cache_key"}
@@ -251,15 +255,57 @@ async def fetched(parts):
             head, _, data = url.partition(",")
             media = head[5:].split(";")[0] or "image/png"
         else:
-            async with HTTP.get(url) as reply:
-                if reply.status != 200:
-                    # The host alone: a signed URL carries its credential in the path or the query.
-                    host = urllib.parse.urlsplit(url).hostname
-                    raise Refused(400, f"an image at {host} answered {reply.status}")
-                media = reply.content_type or "image/png"
-                data = base64.b64encode(await reply.read()).decode()
+            media, data = await downloaded(url)
         out.append({"type": "image", "source": {"type": "base64", "media_type": media, "data": data}})
     return out
+
+
+async def downloaded(url):
+    """The media type and base64 data of the image at URL, from a public address and no larger than IMAGE_BYTES.
+
+    The gateway fetches on behalf of whatever the caller was told, so a URL is held to the public internet: a name
+    resolves only to public addresses (PublicResolver), a literal address is checked here because aiohttp does not
+    resolve one, and each redirect is checked again rather than followed blind."""
+    for _ in range(REDIRECTS + 1):
+        parts = urllib.parse.urlsplit(url)
+        # The host alone in every refusal: a signed URL carries its credential in the path or the query.
+        host = parts.hostname
+        if parts.scheme not in ("http", "https") or not host:
+            raise Refused(400, f"an image URL must be http or https, not {parts.scheme or 'none'}")
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+        if literal is not None and not literal.is_global:
+            raise Refused(400, f"an image at {host} is not on a public address")
+        try:
+            async with IMAGES.get(url, allow_redirects=False) as reply:
+                if reply.status in (301, 302, 303, 307, 308) and reply.headers.get("Location"):
+                    url = urllib.parse.urljoin(url, reply.headers["Location"])
+                    continue
+                if reply.status != 200:
+                    raise Refused(400, f"an image at {host} answered {reply.status}")
+                if (reply.content_length or 0) > IMAGE_BYTES:
+                    raise Refused(400, f"an image at {host} is over {IMAGE_BYTES // 2**20} MB")
+                body = bytearray()
+                async for chunk in reply.content.iter_chunked(64 * 1024):
+                    body += chunk
+                    if len(body) > IMAGE_BYTES:
+                        raise Refused(400, f"an image at {host} is over {IMAGE_BYTES // 2**20} MB")
+                return reply.content_type or "image/png", base64.b64encode(body).decode()
+        except (aiohttp.ClientError, TimeoutError) as e:
+            raise Refused(400, f"an image at {host} could not be fetched: {type(e).__name__}")
+    raise Refused(400, f"an image at {host} redirected more than {REDIRECTS} times")
+
+
+class PublicResolver(aiohttp.ThreadedResolver):
+    """A resolver that keeps a name's public addresses only, so an image URL cannot reach this machine or its network."""
+
+    async def resolve(self, host, port=0, family=socket.AF_INET):
+        found = [r for r in await super().resolve(host, port, family) if ipaddress.ip_address(r["host"]).is_global]
+        if not found:
+            raise OSError(f"{host} has no public address")
+        return found
 
 
 def entries(body):
@@ -349,8 +395,9 @@ def fingerprint(model, system, tools):
 
 
 def said(convo):
-    """A hash of everything the user said in a conversation, which the client sends again word for word."""
-    return hashlib.sha256(json.dumps([plain(e[1]) for e in convo if e[0] == "user"]).encode()).hexdigest()
+    """A hash of everything the user said in a conversation, images included, which the client sends again word for
+    word: two conversations alike in their text but not their images are two conversations."""
+    return hashlib.sha256(json.dumps([e[1] for e in convo if e[0] == "user"], sort_keys=True).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------- the Claude side
@@ -450,11 +497,15 @@ class ClaudeSession:
         self.used = time.monotonic()
         if results is not None:
             missing = [{"type": "text", "text": "(the client returned no output for this call)"}]
+            # Every result fetched before any call is let go: an image that fails leaves the session paused on the
+            # same calls, so the client can send the results again.
+            ready = {call_id: await fetched(results.get(call_id, missing))
+                     for call_id, future in self.futures.items() if not future.done()}
             for call_id, future in list(self.futures.items()):
                 ClaudeSession.paused.pop(call_id, None)
                 del self.futures[call_id]
                 if not future.done():
-                    future.set_result(await fetched(results.get(call_id, missing)))
+                    future.set_result(ready[call_id])
         else:
             await self.client.query(one_message(await fetched(send)))
         usage, reply = {}, ""
@@ -924,8 +975,10 @@ async def models(request):
 
 
 async def startup(app):
-    global HTTP
+    global HTTP, IMAGES
     HTTP = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_read=600))
+    IMAGES = aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=PublicResolver()),
+                                   timeout=aiohttp.ClientTimeout(total=120))
     app["reaper"] = asyncio.create_task(reap())
 
 
@@ -934,6 +987,7 @@ async def cleanup(app):
     for s in list(SESSIONS):
         s.close()
     await HTTP.close()
+    await IMAGES.close()
 
 
 def claude_exe():
@@ -947,7 +1001,7 @@ def claude_exe():
     return found
 
 
-SESSIONS, HTTP, CLAUDE = set(), None, claude_exe()
+SESSIONS, HTTP, IMAGES, CLAUDE = set(), None, None, claude_exe()
 WORKDIR = str(pathlib.Path(tempfile.gettempdir()) / "llm-gateway")
 PROMPTS = pathlib.Path(WORKDIR) / "prompts"  # one folder a port once serving, so no gateway sweeps another's
 

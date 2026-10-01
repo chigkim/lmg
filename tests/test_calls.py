@@ -112,3 +112,16 @@ def test_worth_takes_help_and_refuses_anything_else(capsys):
     with pytest.raises(SystemExit) as done:
         calls.worth(["x"])
     assert done.value.code == 2
+
+
+def test_codex_sessions_are_read_from_codex_home_when_it_is_set(tmp_path, monkeypatch):
+    folder = tmp_path / "elsewhere/sessions"
+    folder.mkdir(parents=True)
+    (folder / "rollout-a.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"type": "session_meta", "payload": {"model_provider": "openai"}},
+        {"timestamp": "2026-09-27T10:00:00Z",
+         "payload": {"type": "token_count", "info": {"total_token_usage": {"output_tokens": 5}}}}]), encoding="utf-8")
+    monkeypatch.setattr(calls, "HOME", tmp_path / "home")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "elsewhere"))
+    [c] = calls.codex(0)
+    assert c.output == 5

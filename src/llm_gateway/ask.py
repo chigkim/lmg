@@ -517,8 +517,9 @@ def review(sha, repo, home, model):
     return status, note, None
 
 
-def child_usage(thread, since, sessions=pathlib.Path.home() / ".codex" / "sessions"):
+def child_usage(thread, since, sessions=None):
     """The counts of the codex session whose parent is THREAD, from its rollout written since SINCE; None if none."""
+    sessions = sessions or calls.codex_home() / "sessions"
     if not thread or not sessions.exists():
         return None
     for rollout in sessions.rglob("rollout-*.jsonl"):
