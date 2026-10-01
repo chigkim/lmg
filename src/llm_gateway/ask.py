@@ -53,7 +53,7 @@ from datetime import datetime
 from . import calls, usage
 
 HARNESSES = ("agy", "claude", "codex")
-DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6-sol"}
+DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6.1-sol"}
 TOKENS = pathlib.Path(__file__).parent / "token-ledger.csv"
 HOMES = pathlib.Path(__file__).parent / "homes.toml"
 # The tool's own checkout, src/llm_gateway/ask.py up two: it is installed editable, so this is the repository.

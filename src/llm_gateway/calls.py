@@ -330,7 +330,7 @@ def base(model):
 
 # OpenAI: a prompt over 272K input tokens is priced at 2x input and cache rates and 1.5x output for the whole request, on
 # the models its pricing page gives a long-context column (developers.openai.com/api/docs/models/gpt-6-sol, 2026-09-27).
-LONG = re.compile(r"gpt-(6|5\.6)-|gpt-5\.[45]$")
+LONG = re.compile(r"gpt-(6(\.\d+)?|5\.6)-|gpt-5\.[45]$")
 
 
 def dollars(call, table):

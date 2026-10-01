@@ -41,7 +41,7 @@ lmg:
     options:
       --repo PATH:                   # default: the repository the current folder is in
       --home PATH:                   # where worktrees/ and runs/ go; default homes.toml's, else jobs/REPO here
-      --model NAME:                  # default gemini-3.8-flash-medium, claude-opus-5-5 or gpt-6-sol
+      --model NAME:                  # default gemini-3.8-flash-medium, claude-opus-5-5 or gpt-6.1-sol
       --timeout T:                   # agy's print timeout; default 3600s
       --force:                       # clean only: remove it even with unmerged work
   usage:                             # every window in one table: percent left, spare, task cost, tasks left, resets
@@ -129,7 +129,7 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 ### Limits
 
 - It binds to `127.0.0.1` only. Anything on this machine that can read `.env` can use it.
-- Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. A full agent harness sending its own system prompt, such as Pi, is refused with `Third-party apps now draw from extra usage` unless Extra Usage is on. The check reads the prompt's content, not the fact that it is another agent's: Pi's prompt is refused for the routing list in its `<docs>` block (extensions, themes, skills, ..., `pi packages`, MCP servers), where no one item fails alone and dropping `custom providers` or `pi packages` from that line alone lets it pass, while its opening line naming Pi passes by itself; Hermes Agent's own 15,000-character prompt, which names Nous Research, passed on Haiku 4.5 and Opus 5.5 in September 2026.
+- Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. A full agent harness sending its own system prompt, such as Pi, is refused with `Third-party apps now draw from extra usage` unless Extra Usage is on. The check reads the prompt's content, not the fact that it is another agent's: Pi's prompt is refused for the routing list in its `<docs>` block (extensions, themes, skills, ..., `pi packages`, MCP servers), where no one item fails alone and dropping `custom providers` or `pi packages` from that line alone lets it pass, while its opening line naming Pi passes by itself; Hermes Agent's own 15,000-character prompt, which names Nous Research, passed on Haiku 4.5 and Opus 5.5 in September 2026, as did Codex's. OpenCode's main prompt is refused like Pi's, while its short session-title prompt passes.
 - A conversation with no live Claude session (after a restart, or a client that edited its history) is replayed to a fresh session as a transcript.
 - Claude's thinking is not passed back. The Codex backend drops fields it does not accept, such as `temperature`.
 
@@ -179,7 +179,7 @@ lmg ask list                                     # every open job: its runs, ans
 | --- | --- |
 | `--repo PATH` | The repository, instead of the one the current folder is in. |
 | `--home PATH` | Where `worktrees/` and `runs/` go, instead of the repository's home. |
-| `--model NAME` | The harness's model, instead of its default: `gemini-3.8-flash-medium`, `claude-opus-5-5`, `gpt-6-sol`. |
+| `--model NAME` | The harness's model, instead of its default: `gemini-3.8-flash-medium`, `claude-opus-5-5`, `gpt-6.1-sol`. |
 | `--timeout T` | agy's print timeout, `3600s` unless given. |
 | `--force` | `clean` only: remove the worktree even though it holds uncommitted files or unmerged commits. |
 

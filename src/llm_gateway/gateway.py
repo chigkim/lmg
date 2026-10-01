@@ -918,7 +918,7 @@ async def _chain(head, rest):
 
 
 async def models(request):
-    names = ["anthropic/sonnet", "anthropic/opus", "anthropic/haiku", "openai/gpt-6-luna", "openai/gpt-6-sol"]
+    names = ["anthropic/sonnet", "anthropic/opus", "anthropic/haiku", "openai/gpt-6-luna", "openai/gpt-6.1-sol"]
     return web.json_response({"object": "list", "data": [{"id": n, "object": "model", "owned_by": n.split("/")[0]}
                                                          for n in names]})
 
