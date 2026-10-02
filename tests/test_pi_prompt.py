@@ -27,6 +27,27 @@ def test_only_generated_scaffold_is_replaced():
     assert "<tools>" not in adapted
 
 
+@pytest.mark.parametrize("text, expected", [
+    ("Pi pi", " "),
+    ("Pi-agent pi-agent", "-agent -agent"),
+    ("Pi_tools pi_tools", "_tools _tools"),
+    ("agent-Pi agent_pi _pi_", "agent- agent_ __"),
+    ("(Pi), 'pi'; Pi/pi.", "(), ''; /."),
+    ("pipeline spin api Pi2 2pi épi pié", "pipeline spin api Pi2 2pi épi pié"),
+])
+def test_pi_words_are_removed_with_punctuation_and_underscore_boundaries(text, expected):
+    tail = "\n\n<addendum>\n" + text + "\n</addendum>"
+    assert adapt_pi_prompt(pi_prompt(tail)) == adapt_pi_prompt(pi_prompt()) + "\n\n<addendum>\n" + expected + "\n</addendum>"
+
+
+def test_pi_words_are_removed_from_rules_and_wrappers():
+    raw = "Pi wrapper\n" + pi_prompt().replace("Keep project policy", "Keep pi_policy") + "\npi-footer"
+    adapted = adapt_pi_prompt(raw)
+    assert adapted.startswith(" wrapper\n<rules>")
+    assert "Keep _policy" in adapted
+    assert adapted.endswith("\n-footer")
+
+
 def test_wrappers_and_repeated_embedded_pi_prompts_are_preserved():
     raw = "Wrapper instructions\n" + pi_prompt() + "\nChild instructions\n" + pi_prompt() + "\nFinal instructions"
     adapted = adapt_pi_prompt(raw)

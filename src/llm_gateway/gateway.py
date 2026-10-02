@@ -17,9 +17,7 @@ a tool call ends the HTTP response with a function_call, the handler waits, and 
 function_call_output for that call id hands the output to it and lets Claude carry on. A conversation the gateway has
 no live session for (a restart, a client that edited its history) is replayed to a fresh session as a transcript.
 
-Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment or from a .env
-file found from the working directory upward. With neither, it writes a new random key to .env in the working directory
-and uses that: a keyless gateway would let any process on the machine, or a web page in its browser, spend both plans.
+Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment or from the repository's .env beside pyproject.toml, located relative to this script. With neither, it writes a new random key there and uses that: a keyless gateway would let any process on the machine, or a web page in its browser, spend both plans.
 
 Credentials: the Codex token is read from auth.json on every request and never refreshed, written, logged or printed.
 Codex rotates its refresh token, so a second refresher could log Codex out; when the token expires, run any `codex`
@@ -49,12 +47,13 @@ import uuid
 
 import aiohttp
 from aiohttp import web
-from dotenv import dotenv_values, find_dotenv
+from dotenv import dotenv_values
 from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, SdkMcpTool, StreamEvent,
                               create_sdk_mcp_server)
 
 from .pi_prompt import adapt_pi_prompt
 
+DOTENV = pathlib.Path(__file__).resolve().parents[2] / ".env"  # src/llm_gateway/gateway.py -> the project
 SERVER = "c"                 # the SDK names a tool mcp__SERVER__NAME
 PREFIX = f"mcp__{SERVER}__"
 IDLE = 30 * 60               # seconds a Claude session is kept with nobody using it
@@ -1033,11 +1032,11 @@ def refusal(status, message):
 
 
 def api_key():
-    """GATEWAY_API_KEY from the environment, else from .env; with neither, a new one written to ./.env."""
-    key = os.environ.get("GATEWAY_API_KEY") or dotenv_values(find_dotenv(usecwd=True)).get("GATEWAY_API_KEY")
+    """Read the environment or script-relative repository .env; generate a key there if neither supplies one."""
+    key = os.environ.get("GATEWAY_API_KEY") or dotenv_values(DOTENV).get("GATEWAY_API_KEY")
     if key and key.strip():
         return key.strip()
-    key, path = secrets.token_urlsafe(32), pathlib.Path(".env").resolve()
+    key, path = secrets.token_urlsafe(32), DOTENV
     lead = "\n" if path.exists() and not path.read_bytes().endswith(b"\n") and path.stat().st_size else ""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:

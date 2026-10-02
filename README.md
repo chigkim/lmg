@@ -76,7 +76,7 @@ uv run lmg proxy stop
 uv run lmg proxy run        # or in this console, until Ctrl-C
 ```
 
-Every command takes `--port N` (default 8797) and `--config PATH` (default `config.toml`). Installed as a tool, `lmg proxy` runs without `uv run`; it still reads `config.toml` and `.env` from the folder you run `start` in.
+Every command takes `--port N` (default 8797) and `--config PATH` (default `config.toml`). Installed as a tool, `lmg proxy` runs without `uv run`; it reads `config.toml` from the folder you run `start` in, but always reads or creates `.env` in the repository beside `pyproject.toml`, located relative to the gateway script.
 
 The daemon is known by its port. Its pid and console output are in `logs/PORT.pid` and `logs/PORT.log` in this project, found from the script's own location, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
 
@@ -98,7 +98,7 @@ Then `codex exec -c model_provider=lmg -m anthropic/claude-haiku-4-5 "..."` runs
 
 ### API key
 
-Every request needs `Authorization: Bearer KEY`, which is what an OpenAI client sends for its API key. The gateway reads `GATEWAY_API_KEY` from the environment first, then from the first `.env` found from the working directory upward. With neither, the first run generates a random key, writes it to `.env` in the working directory (appending if that file exists without one) and says so, without printing the key. Give a client the value from that file. `.env` is gitignored. The key is compared in constant time and never logged.
+Every request needs `Authorization: Bearer KEY`, which is what an OpenAI client sends for its API key. The gateway reads `GATEWAY_API_KEY` from the environment first, then from the repository's `.env` beside `pyproject.toml`, located relative to the gateway script rather than the execution directory. With neither, the first run generates a random key, writes it to that repository `.env` (appending if that file exists without one) and says so, without printing the key. Give a client the value from that file. `.env` is gitignored. The key is compared in constant time and never logged.
 
 The key is what stops other processes on this machine, or a web page in your browser, from spending your plans: a browser cannot send an `Authorization` header to another site without a CORS preflight, which the gateway never answers.
 

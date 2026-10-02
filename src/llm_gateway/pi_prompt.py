@@ -12,9 +12,11 @@ PI_SCAFFOLD = re.compile(
     r".*?\r?\n</docs>",
     re.MULTILINE | re.DOTALL,
 )
+# Underscores are separators here, unlike Python's regex word boundaries.
+PI_WORD = re.compile(r"(?<![^\W_])[Pp]i(?![^\W_])")
 
 
 def adapt_pi_prompt(system):
-    """Return the append for Claude Code's preset, or None when the prompt is not Pi's standard tagged scaffold. Rendered rules can contain user/tool guidelines, so keep them along with every byte outside the generated preamble, tool inventory, and documentation routing."""
+    """Return the append for Claude Code's preset, or None for unrecognized prompts. Keep rendered rules and content outside the generated scaffold, then remove Pi/pi words with punctuation and underscores treated as separators."""
     adapted, count = PI_SCAFFOLD.subn(lambda match: match.group("rules"), system)
-    return adapted if count else None
+    return PI_WORD.sub("", adapted) if count else None
