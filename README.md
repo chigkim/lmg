@@ -125,13 +125,19 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 
 - The Codex token is read from `auth.json` on every request and never refreshed, written, logged or printed. When it expires, run any `codex` command and retry.
 - Claude's login is never touched: the SDK's `claude` child uses its own. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` are dropped from the environment at startup, so the Claude side is the subscription or nothing.
-- The client's system prompt reaches `claude` as a file, `system-ID.md` in `llm-gateway/prompts-PORT` under the temp folder: one a session, so two at once never share one, deleted when the session ends, and swept when the gateway on that port next starts, since `stop` kills it before it can clean up. On the command line, a prompt over 32,767 characters, such as OpenCode's, could not start the child on Windows.
+- The client's system prompt reaches `claude` as a file, `system-ID.md` in `llm-gateway/prompts-PORT` under the temp folder: one a session, so two at once never share one, deleted when the session ends, and swept when the gateway on that port next starts, since `stop` kills it before it can clean up. On the command line, a prompt over 32,767 characters, such as OpenCode's, could not start the child on Windows. Recognized Pi prompts use that file as an append to Claude Code's preset rather than as a full replacement; other prompts keep the original file mode.
 - On Windows the SDK will not run npm's `claude.cmd` shim, so the gateway uses the `claude.exe` inside the npm package. `CLAUDE_CLI` overrides the path.
+
+### Pi prompts
+
+On the Claude route only, the gateway recognizes Pi's standard tagged system prompt by its complete generated preamble followed by the `<tools>`, `<rules>`, and Pi `<docs>` sections in order. It replaces the generated preamble, tool inventory, and documentation routing with Claude Code's preset. Rules remain because they can contain user or tool guidelines; project instructions, skills, working-directory context, custom sections, and text wrapped around the Pi prompt are preserved. Client tools still run through MCP, and Claude Code's native tools, settings, and skills stay disabled.
+
+Unlike the Pi bridge, the gateway receives no structured prompt metadata, so this is a rendered-text adaptation, not an exact copy of the bridge's projection. Custom, older, or rewritten prompts that do not match the standard scaffold pass through unchanged, as do standalone summary prompts and every OpenAI request. Session matching continues to use the original client prompt. Anthropic's acceptance and billing remain determined by its service; adaptation is not a guarantee of subscription eligibility.
 
 ### Limits
 
 - It binds to `127.0.0.1` only. Anything on this machine that can read `.env` can use it.
-- Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. A full agent harness sending its own system prompt, such as Pi, is refused with `Third-party apps now draw from extra usage` unless Extra Usage is on. The check reads the prompt's content, not the fact that it is another agent's: Pi's prompt is refused for the routing list in its `<docs>` block (extensions, themes, skills, ..., `pi packages`, MCP servers), where no one item fails alone and dropping `custom providers` or `pi packages` from that line alone lets it pass, while its opening line naming Pi passes by itself; Hermes Agent's own 15,000-character prompt, which names Nous Research, passed on Haiku 4.5 and Opus 5.5 in September 2026, as did Codex's. OpenCode's main prompt is refused like Pi's, while its short session-title prompt passes.
+- Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. An unadapted full agent harness prompt, such as Pi's, can be refused with `Third-party apps now draw from extra usage` unless Extra Usage is on; the recognized Pi scaffold is adapted as described above. The check reads the prompt's content, not the fact that it is another agent's: Pi's prompt is refused for the routing list in its `<docs>` block (extensions, themes, skills, ..., `pi packages`, MCP servers), where no one item fails alone and dropping `custom providers` or `pi packages` from that line alone lets it pass, while its opening line naming Pi passes by itself; Hermes Agent's own 15,000-character prompt, which names Nous Research, passed on Haiku 4.5 and Opus 5.5 in September 2026, as did Codex's. OpenCode's main prompt is refused like Pi's, while its short session-title prompt passes.
 - A conversation with no live Claude session (after a restart, or a client that edited its history) is replayed to a fresh session as a transcript.
 - Claude's thinking is not passed back. The Codex backend drops fields it does not accept, such as `temperature`.
 
@@ -141,9 +147,14 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 
 ```toml
 [log]
-file = "logs/log.jsonl"   # relative to config.toml; leave out to log nothing
+file = "logs/{session}.jsonl"  # relative to config.toml; leave out to log nothing
 level = "debug"
+source = "sent"         # received (default) or sent, after provider adaptation
 ```
+
+`{session}` expands to `yy-mm-dd hh-mm-ss session-id`, for example `26-10-03 14-30-05 session-a1b2c3.jsonl`. Each conversation's system, request, and trace entries share one file; later turns append to it. A fixed filename such as `logs/log.jsonl` keeps the old combined log. Existing logs are not moved or split.
+
+Send a stable `X-Session-ID` or `Session-ID` header, or `metadata.session_id`, for reliable conversation grouping. IDs are sanitized for filenames. Without an explicit ID, the gateway matches previously logged conversation-history prefixes and reuses live Claude sessions' generated IDs. Two independent conversations with identical histories cannot be distinguished reliably; ambiguous history matches start a separate file rather than merge them. Conversation lookup is process-local and bounded to 4,096 entries, so edited or truncated histories or evicted entries may start a new file. A gateway restart starts new timestamped files, even for explicit IDs. An explicit ID takes priority over inferred history and provider sessions.
 
 Each level holds everything below it:
 
@@ -152,10 +163,12 @@ Each level holds everything below it:
 | `off` | Nothing is written. |
 | `error` | A refused or failed request: `api`, `model`, `stream`, `seconds`, `usage` and the `error`. |
 | `info` | Every request, with the same fields. The default when `level` is left out. |
-| `debug` | Also `input`, the last message the client sent (a user message or a tool result), and `output`, the reply: the Responses output items, or the Chat Completions assistant message with any tool calls. |
-| `trace` | Also one line for every whole request body (`kind` `responses` or `chat`) and every event the model sent (`kind` `event`). |
+| `debug` | Also `input` and `output`, the reply: the Responses output items, or the Chat Completions assistant message with any tool calls. When the received conversation has only one non-system message, the system prompt and the available tools are written separately with `kind = "system"`, never inside the request entry. The entry is written when either is present; `tools` is left out when there are none. |
+| `trace` | Also one line for every whole request body (`kind` `responses` or `chat` for received content, `sent` for provider-facing content) and every event the model sent (`kind` `event`). |
 
-A request's line has `kind` `request`. Image data URLs are cut to their type and size at every level. The key is never logged, but from `debug` up prompts and replies are, in full; `*.jsonl` is gitignored. The level is read at startup, so a change needs a restart.
+`source = "received"` preserves the client's last input message and original system prompt. `source = "sent"` logs the actual provider-facing input: Claude's fetched message blocks or resumed tool results, including transcript replay, or Codex's normalized last input. Claude system entries contain the exact custom prompt text, or an object naming the `claude_code` preset and its exact adapted `append` text. Received `tools` are the client's tool list as sent. Sent `tools` are what the provider got: for Claude, the MCP tools as `name` (with the `mcp__c__` prefix), `description`, and `input_schema`, with any dropped tool types left out; for Codex, the `tools` field of the posted body. The SDK's built-in preset text is not available to the gateway; this logs what the gateway supplies, not an internal model request reconstructed from the SDK. Requests refused before anything is sent have a null input and no system entry in sent mode.
+
+A request's line has `kind` `request`. Image data URLs are cut to their type and size at every level. The key is never logged, but from `debug` up prompts and replies are, in full; `*.jsonl` is gitignored. Settings are read at startup, so a change needs a restart.
 
 ### Smoke test
 
@@ -237,6 +250,8 @@ Now 6:17 AM on 30 Sep
 ```
 
 Spare is what is left less what would be left had the window been spent evenly over its length: +12% is that much ahead of pace, -15% that much behind. Task cost is what one task of that plan's harness has taken from the window on average, and tasks left is what is left over it; `lmg usage tasks` shows what the cost is measured from. agy's Claude and GPT group shows `-`, since the ledger keeps agy's Gemini group only. A 5-hour window that runs out may reset before the weekly one does, so which one limits you is read off when each resets. A reset today gives only its time; a later one gives its date too. A plan that could not be read is named under the table with the reason. A window its plan does not report is not listed: Claude's endpoint does not always give a weekly figure.
+
+Claude's model-specific weekly Fable limit is listed as `Claude Fable week`, separately from the all-models `Claude week` limit when reported. It is also recorded for `lmg usage tasks`; writing a reading extends older ledger headers while preserving their rows. Fable is not included in `lmg usage worth`, since its model-to-call mapping is not verified.
 
 ## Measuring a task
 

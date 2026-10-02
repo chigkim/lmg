@@ -27,6 +27,8 @@ command and retry. Claude's login is never touched at all: the SDK's `claude` ch
 """
 import asyncio
 import base64
+import contextvars
+import functools
 import hashlib
 import hmac
 import ipaddress
@@ -51,6 +53,8 @@ from dotenv import dotenv_values, find_dotenv
 from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, SdkMcpTool, StreamEvent,
                               create_sdk_mcp_server)
 
+from .pi_prompt import adapt_pi_prompt
+
 SERVER = "c"                 # the SDK names a tool mcp__SERVER__NAME
 PREFIX = f"mcp__{SERVER}__"
 IDLE = 30 * 60               # seconds a Claude session is kept with nobody using it
@@ -65,10 +69,13 @@ CODEX_FIELDS = {"model", "instructions", "input", "tools", "tool_choice", "paral
 # How much config.toml's [log] file gets, each level holding everything below it:
 #   error  a request that was refused or failed, and why
 #   info   every request: model, timing, usage
-#   debug  and its last input message and its reply
+#   debug  and its input and reply, plus a separate system and tools entry for a lone message
 #   trace  and the whole request body and every event the model sent
 LEVELS = ("off", "error", "info", "debug", "trace")
-LOG, LEVEL = None, 0                   # the log file and its level's index in LEVELS, set by main
+LOG, LEVEL, SOURCE = None, 0, "received"  # configured at startup
+SENT = contextvars.ContextVar("sent_request", default=None)
+LOG_CONTEXT = contextvars.ContextVar("conversation_log", default=None)
+LOG_FILES, LOG_HISTORY = {}, {}  # bounded, process-local conversation lookup
 
 
 class Refused(Exception):
@@ -83,9 +90,107 @@ def log(*parts):
     print(time.strftime("%H:%M:%S"), *parts, file=sys.stderr, flush=True)
 
 
+def bounded_put(cache, key, value):
+    cache[key] = value
+    if len(cache) > 4096:
+        del cache[next(iter(cache))]
+
+
+def conversation_log(handler):
+    """Keep concurrent HTTP requests' log destinations separate, including trace lines."""
+    @functools.wraps(handler)
+    async def wrapped(request):
+        if not LOG or "{session}" not in LOG:
+            return await handler(request)
+        client_id = request.headers.get("X-Session-ID") or request.headers.get("Session-ID")
+        state = {"client_id": client_id, "session": None, "pending": []}
+        token = LOG_CONTEXT.set(state)
+        try:
+            return await handler(request)
+        finally:
+            try:
+                bind_log()
+            finally:
+                LOG_CONTEXT.reset(token)
+    return wrapped
+
+
+def bind_log(session_id=None):
+    """Select a conversation file and flush any trace received before routing was known."""
+    state = LOG_CONTEXT.get()
+    if state is None or state["session"] is not None:
+        return
+    session_id = str(state.get("client_id") or state.get("inferred") or session_id or new_id("session"))
+    if session_id not in LOG_FILES:
+        safe = re.sub(r"[^a-zA-Z0-9_.-]", "_", session_id)[:80]
+        if safe != session_id:
+            safe += "-" + hashlib.sha256(session_id.encode()).hexdigest()[:12]
+        bounded_put(LOG_FILES, session_id, time.strftime("%y-%m-%d %H-%M-%S") + " " + safe)
+    state["session"] = session_id
+    state["file"] = LOG.replace("{session}", LOG_FILES[session_id])
+    pending, state["pending"] = state["pending"], []
+    for line in pending:
+        logged(line)
+
+
+def log_history_key(scope, convo):
+    return hashlib.sha256(json.dumps([scope, convo], sort_keys=True).encode()).hexdigest()
+
+
+def identify_log(body):
+    """Prefer a client session ID; otherwise match a known conversation-history prefix."""
+    state = LOG_CONTEXT.get()
+    if state is None:
+        return
+    metadata = body.get("metadata")
+    client_id = metadata.get("session_id") if isinstance(metadata, dict) else None
+    state["client_id"] = state["client_id"] or client_id
+    try:
+        system, convo = entries(body)
+    except (KeyError, TypeError, AttributeError, ValueError):
+        return  # Logging must not change how the provider handles malformed input.
+    scope = fingerprint(body.get("model"), system, body.get("tools"))
+    state.update(scope=scope, convo=convo)
+    if not state["client_id"]:
+        for n in range(len(convo) - 1, 0, -1):
+            known = LOG_HISTORY.get(log_history_key(scope, convo[:n]))
+            if known:
+                state["inferred"] = known
+                break
+
+
+def remember_log(api, output):
+    state = LOG_CONTEXT.get()
+    if state is None or "convo" not in state or not output:
+        return
+    bind_log()
+    try:
+        if api == "chat":
+            output = chat_to_responses({"messages": [output]}).get("input", [])
+        _, reply = entries({"input": output})
+    except (Refused, KeyError, TypeError, AttributeError, ValueError):
+        return
+    key = log_history_key(state["scope"], state["convo"] + reply)
+    session = state["session"]
+    # Indistinguishable histories must not silently merge two independent conversations.
+    if key in LOG_HISTORY and LOG_HISTORY[key] != session:
+        session = None
+    bounded_put(LOG_HISTORY, key, session)
+
+
 def logged(line):
-    line = dict(time=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **line)
-    with open(LOG, "a", encoding="utf-8") as f:
+    state = LOG_CONTEXT.get()
+    if state is not None and state["session"] is None:
+        state["pending"].append(dict(time=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **line))
+        return
+    file = state["file"] if state is not None else LOG
+    if "{session}" in file:
+        file = file.replace("{session}", time.strftime("%y-%m-%d %H-%M-%S") + " " + new_id("session"))
+    line = dict(line)
+    line.setdefault("time", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    if state is not None:
+        line["session_id"] = state["session"]
+    with open(file, "a", encoding="utf-8") as f:
         f.write(json.dumps(shrunk(line), ensure_ascii=False) + "\n")
 
 
@@ -98,7 +203,8 @@ def trace(kind, obj):
 def shrunk(obj):
     """obj with every data URL cut to its type and size, so an image does not fill the log."""
     if isinstance(obj, dict):
-        return {k: shrunk(v) for k, v in obj.items()}
+        return {k: f"<{len(v)} chars>" if k == "data" and isinstance(v, str)
+                and obj.get("type") in ("base64", "image") else shrunk(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [shrunk(v) for v in obj]
     if isinstance(obj, str) and obj.startswith("data:") and "," in obj:
@@ -113,34 +219,81 @@ def last_input(body, api):
     return items[-1] if isinstance(items, list) and items else items
 
 
-def record(api, body, started, output=None, usage=None, error=None):
+def lone_system(body, api):
+    """The system prompt of a request whose conversation is a single message, or None for a longer one."""
+    items = body.get("messages") if api == "chat" else body.get("input")
+    if isinstance(items, str):
+        items = [{"role": "user", "content": items}]
+    items = [i for i in items or [] if isinstance(i, dict)]
+    system = [i for i in items if i.get("role") in ("system", "developer")]
+    if len(items) - len(system) != 1:
+        return None
+    texts = [body.get("instructions")] if api == "responses" else []
+    texts += [plain(parts_of(i.get("content"))) for i in system]
+    return "\n\n".join(t for t in texts if t) or None
+
+
+def sent_request(body, input, system=None, tools=None):
+    """Capture provider-facing content, never credentials or temporary prompt paths."""
+    state = SENT.get()
+    if state is not None and SOURCE == "sent":
+        state.update(input=input, system=system, tools=tools)
+        trace("sent", body)
+
+
+def record(api, body, started, output=None, usage=None, error=None, sent=None):
     """One line for a finished request, holding as much as the level asks for."""
     if not LOG or LEVEL < LEVELS.index("info" if error is None else "error"):
         return
+    bind_log()
+    remember_log(api, output)
     line = {"kind": "request", "api": api, "model": body.get("model"), "stream": bool(body.get("stream")),
             "seconds": round(time.monotonic() - started, 2), "usage": usage}
     if error:
         line["error"] = error
     if LEVEL >= LEVELS.index("debug"):
-        line.update(input=last_input(body, api), output=output)
+        items = body.get("messages") if api == "chat" else body.get("input")
+        if isinstance(items, str):
+            items = [{"role": "user", "content": items}]
+        conversation = [i for i in items or [] if isinstance(i, dict)
+                        and i.get("role") not in ("system", "developer")]
+        lone = len(conversation) == 1
+        if SOURCE == "sent":
+            line["source"] = "sent"
+            line["input"] = (sent or {}).get("input")
+            system = (sent or {}).get("system") if lone else None
+            tools = (sent or {}).get("tools") if lone else None
+        else:
+            system = lone_system(body, api)
+            tools = body.get("tools") if lone else None
+            line["input"] = last_input(body, api)
+        if system or tools:
+            entry = {"kind": "system", "api": api, "model": body.get("model"), "source": SOURCE, "system": system}
+            if tools:
+                entry["tools"] = tools
+            logged(entry)
+        line["output"] = output
     logged(line)
 
 
 def configured(path):
-    """config.toml's [log] file, resolved beside it, and its level; (None, 0) for no config or no file."""
+    """Return the log file, level, and received/sent source from config.toml."""
     path = pathlib.Path(path)
     if not path.exists():
-        return None, 0
+        return None, 0, "received"
     section = tomllib.loads(path.read_text(encoding="utf-8")).get("log", {})
     level = section.get("level", "info")
     if level not in LEVELS:
         sys.exit(f"{path}: [log] level is {level!r}; use one of {', '.join(LEVELS)}")
+    source = section.get("source", "received")
+    if source not in ("received", "sent"):
+        sys.exit(f"{path}: [log] source is {source!r}; use received or sent")
     name = section.get("file")
     if not name or level == "off":
-        return None, 0
+        return None, 0, source
     file = path.parent / name
     file.parent.mkdir(parents=True, exist_ok=True)
-    return str(file), LEVELS.index(level)
+    return str(file), LEVELS.index(level), source
 
 
 def new_id(prefix):
@@ -422,9 +575,18 @@ class ClaudeSession:
         # The prompt goes in a file: on the command line, one over 32,767 characters (OpenCode's is 51,000)
         # cannot start the child on Windows, and the SDK reports that as the CLI not being found.
         self.prompt = PROMPTS / f"system-{uuid.uuid4().hex}.md"
-        self.prompt.write_text(system or "You are a helpful assistant.", encoding="utf-8", newline="")
+        pi_append = adapt_pi_prompt(system)
+        prompt_text = pi_append if pi_append is not None else system or "You are a helpful assistant."
+        self.sent_system = ({"type": "preset", "preset": "claude_code", "append": prompt_text}
+                            if pi_append is not None else prompt_text)
+        self.sent_tools = [{"name": PREFIX + n, "description": d, "input_schema": s} for n, d, s, _ in tools]
+        self.prompt.write_text(prompt_text, encoding="utf-8", newline="")
+        system_prompt = ({"type": "preset", "preset": "claude_code"} if pi_append is not None
+                         else {"type": "file", "path": str(self.prompt)})
+        # Keep both custom prompts and Pi's preset append off Windows' command line. Session matching still uses the original client prompt above.
+        extra_args = {"append-system-prompt-file": str(self.prompt)} if pi_append is not None else {}
         options = ClaudeAgentOptions(
-            model=model, system_prompt={"type": "file", "path": str(self.prompt)}, tools=[],
+            model=model, system_prompt=system_prompt, extra_args=extra_args, tools=[],
             mcp_servers={SERVER: server}, strict_mcp_config=True, allowed_tools=[PREFIX + n for n, *_ in tools],
             setting_sources=[], skills=[], include_partial_messages=True, cwd=WORKDIR, effort=effort, cli_path=CLAUDE,
             env={"MCP_TOOL_TIMEOUT": str(24 * 3600 * 1000), "MAX_MCP_OUTPUT_TOKENS": "200000",
@@ -504,13 +666,19 @@ class ClaudeSession:
             # same calls, so the client can send the results again.
             ready = {call_id: await fetched(results.get(call_id, missing))
                      for call_id, future in self.futures.items() if not future.done()}
+            sent_request({"system": self.sent_system, "tools": self.sent_tools, "tool_results": ready}, ready,
+                         self.sent_system, self.sent_tools)
             for call_id, future in list(self.futures.items()):
                 ClaudeSession.paused.pop(call_id, None)
                 del self.futures[call_id]
                 if not future.done():
                     future.set_result(ready[call_id])
         else:
-            await self.client.query(one_message(await fetched(send)))
+            blocks = await fetched(send)
+            message = {"role": "user", "content": blocks}
+            sent_request({"system": self.sent_system, "tools": self.sent_tools, "input": message}, message,
+                         self.sent_system, self.sent_tools)
+            await self.client.query(one_message(blocks))
         usage, reply = {}, ""
         while True:
             event = await self.events.get()
@@ -588,6 +756,9 @@ async def claude(model, body):
             session = ClaudeSession(model, system, tools, effort_of(model, body))
             SESSIONS.add(session)
             route, run = f"fresh, {len(convo)} entries", {"send": transcript(convo)}
+    if not hasattr(session, "log_id"):
+        session.log_id = new_id("session")
+    bind_log(session.log_id)
     log(f"  anthropic/{model}: {route}")
     async with session.lock:
         # Two requests carrying the same results can both find the paused session; only the first hands them back.
@@ -629,6 +800,7 @@ def codex_login():
 
 async def openai(model, body):
     """Responses events for a request to openai/MODEL, from the Codex backend."""
+    bind_log()
     access, account = codex_login()
     sent = {k: v for k, v in body.items() if k in CODEX_FIELDS}
     sent.update(model=model, store=False, stream=True)
@@ -639,6 +811,7 @@ async def openai(model, body):
     log(f"  openai/{model}" + (f": dropped {', '.join(dropped)}" if dropped else ""))
     headers = {"Authorization": f"Bearer {access}", "chatgpt-account-id": account, "OpenAI-Beta": "responses=experimental",
                "originator": "llm-gateway", "accept": "text/event-stream", "content-type": "application/json"}
+    sent_request(sent, last_input(sent, "responses"), lone_system(sent, "responses"), sent.get("tools"))
     async with HTTP.post(CODEX_URL, json=sent, headers=headers) as reply:
         if reply.status != 200:
             text = (await reply.text())[:500]
@@ -734,6 +907,8 @@ def _chat_to_responses(body):
             items.append({"type": "function_call_output", "call_id": m["tool_call_id"],
                           "output": chat_parts(m.get("content"))})
     out = {"model": body.get("model"), "input": items, "stream": bool(body.get("stream"))}
+    if body.get("metadata"):
+        out["metadata"] = body["metadata"]
     if system:
         out["instructions"] = "\n\n".join(system)
     tools = [{"type": "function", "name": t["function"]["name"], "description": t["function"].get("description", ""),
@@ -806,21 +981,29 @@ class ChatWriter:
 
 # ---------------------------------------------------------------- HTTP
 
-def backend(body):
+def backend(body, sent=None):
     named = body.get("model")
     provider, _, model = (named if isinstance(named, str) else "").partition("/")
     if provider not in PROVIDERS or not model:
         raise Refused(400, f"the model {named!r} names no provider; use "
                            + " or ".join(f"{p}/MODEL" for p in PROVIDERS))
-    return guarded(PROVIDERS[provider](model, body))
+    identify_log(body)
+    return guarded(PROVIDERS[provider](model, body), sent)
 
 
-async def guarded(events):
+async def guarded(events, sent=None):
     """EVENTS, with any failure but a refusal made one: a provider that cannot be reached is a 502, and anything
     else -- a request shaped as no client should send, or a fault here -- a 500 with its traceback in the log, so the
     client gets an error it can read, or a response.failed event mid-stream, rather than a dropped connection."""
     try:
-        async for e in events:
+        while True:
+            token = SENT.set(sent)
+            try:
+                e = await anext(events)
+            except StopAsyncIteration:
+                return
+            finally:
+                SENT.reset(token)
             yield e
     except Refused:
         raise
@@ -894,6 +1077,7 @@ async def sse(request):
     return reply
 
 
+@conversation_log
 async def responses(request):
     started = time.monotonic()
     try:
@@ -901,14 +1085,16 @@ async def responses(request):
     except Refused as e:
         log(f"POST {request.path} refused {e.status}: {e}")
         return refusal(e.status, str(e))
-    trace("responses", body)
+    sent = {}
+    if SOURCE == "received":
+        trace("responses", body)
     log(f"POST /v1/responses {body.get('model')} stream={bool(body.get('stream'))}")
     try:
-        events = backend(body)
+        events = backend(body, sent)
         head = await first(events)
     except Refused as e:
         log(f"  refused {e.status}: {e}")
-        record("responses", body, started, error=f"{e.status}: {e}")
+        record("responses", body, started, sent=sent, error=f"{e.status}: {e}")
         return refusal(e.status, str(e))
     reply, n, last, done, failure = None, 0, None, [], None
     try:
@@ -933,13 +1119,13 @@ async def responses(request):
         log(f"  failed mid-reply: {e}")
         failure = f"{e.status}: {e}"
         if not reply:
-            record("responses", body, started, output=done, error=failure)
+            record("responses", body, started, sent=sent, output=done, error=failure)
             return refusal(e.status, str(e))
         failed = {"type": "response.failed", "sequence_number": n,
                   "response": {"status": "failed", "error": {"code": "gateway_error", "message": str(e)}}}
         await reply.write(f"event: response.failed\ndata: {json.dumps(failed)}\n\n".encode())
     log(f"  {time.monotonic() - started:.1f}s, usage {(last or {}).get('usage')}")
-    record("responses", body, started, output=(last or {}).get("output") or done,
+    record("responses", body, started, sent=sent, output=(last or {}).get("output") or done,
            usage=(last or {}).get("usage"), error=failure)
     if reply:
         await reply.write_eof()
@@ -949,6 +1135,7 @@ async def responses(request):
     return web.json_response(last)
 
 
+@conversation_log
 async def chat(request):
     started = time.monotonic()
     try:
@@ -956,15 +1143,17 @@ async def chat(request):
     except Refused as e:
         log(f"POST {request.path} refused {e.status}: {e}")
         return refusal(e.status, str(e))
-    trace("chat", body)
+    sent = {}
+    if SOURCE == "received":
+        trace("chat", body)
     log(f"POST /v1/chat/completions {body.get('model')} stream={bool(body.get('stream'))}")
     writer = ChatWriter(body.get("model"))
     try:
-        events = backend(chat_to_responses(body))
+        events = backend(chat_to_responses(body), sent)
         head = await first(events)
     except Refused as e:
         log(f"  refused {e.status}: {e}")
-        record("chat", body, started, error=f"{e.status}: {e}")
+        record("chat", body, started, sent=sent, error=f"{e.status}: {e}")
         return refusal(e.status, str(e))
     stream, reply, failure = bool(body.get("stream")), None, None
     try:
@@ -980,11 +1169,11 @@ async def chat(request):
         log(f"  failed mid-reply: {e}")
         failure = f"{e.status}: {e}"
         if not reply:
-            record("chat", body, started, output=writer.whole()["choices"][0]["message"], error=failure)
+            record("chat", body, started, sent=sent, output=writer.whole()["choices"][0]["message"], error=failure)
             return refusal(e.status, str(e))
         await reply.write(f"data: {json.dumps({'error': {'message': str(e)}})}\n\n".encode())
     log(f"  {time.monotonic() - started:.1f}s, usage {writer.usage}")
-    record("chat", body, started, output=writer.whole()["choices"][0]["message"], usage=writer.usage, error=failure)
+    record("chat", body, started, sent=sent, output=writer.whole()["choices"][0]["message"], usage=writer.usage, error=failure)
     if not reply:
         return web.json_response(writer.whole())
     if (body.get("stream_options") or {}).get("include_usage"):
@@ -1065,8 +1254,8 @@ PROMPTS = pathlib.Path(WORKDIR) / "prompts"  # one folder a port once serving, s
 
 def serve(port, config):
     """Serve on 127.0.0.1:port until stopped, with the settings in the config file."""
-    global LOG, LEVEL, PROMPTS
-    LOG, LEVEL = configured(config)
+    global LOG, LEVEL, SOURCE, PROMPTS
+    LOG, LEVEL, SOURCE = configured(config)
     PROMPTS = pathlib.Path(WORKDIR) / f"prompts-{port}"
     key = api_key()
     os.makedirs(PROMPTS, exist_ok=True)

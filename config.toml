@@ -1,12 +1,15 @@
 # llm-gateway settings. Read from the working directory, or wherever --config points.
 
 [log]
-# The file, relative to this one. Leave it out to log nothing.
-file = "logs/log.jsonl"
+# One file per conversation; {session} becomes yy-mm-dd hh-mm-ss session-id.
+# Relative to this config. Leave it out to log nothing.
+file = "logs/{session}.jsonl"
 # How much it gets. Each level holds everything below it:
 #   off    nothing
 #   error  a request that was refused or failed, and why
 #   info   every request: model, timing, usage (the default)
-#   debug  and its last input message and its reply
+#   debug  and its input and reply; a lone message's system prompt and tools get their own entry
 #   trace  and the whole request body and every event the model sent
 level = "debug"
+# Log client content (received) or provider-facing content after adaptation (sent).
+source = "sent"

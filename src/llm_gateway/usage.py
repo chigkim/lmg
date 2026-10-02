@@ -97,7 +97,8 @@ def span(seconds):
 ROUGH = 5     # tasks below which a window's task cost is a first guess
 ROUGH_NOTE = f"a cost from fewer than {ROUGH} tasks, so a first guess"
 # How lmg usage names each ledger window, so lmg usage tasks can name them the same.
-LABELS = {"claude_5h": "Claude 5h", "claude_week": "Claude week", "codex_5h": "Codex 5h",
+LABELS = {"claude_5h": "Claude 5h", "claude_week": "Claude week",
+          "claude_week_fable": "Claude Fable week", "codex_5h": "Codex 5h",
           "codex_week": "Codex week", "agy_5h": "agy Gemini 5h", "agy_week": "agy Gemini week"}
 
 WEEK = 7 * 24 * 3600
@@ -166,18 +167,41 @@ def claude():
         with OPENER.open(request, timeout=30) as reply:
             windows = json.load(reply)
         del request
-        names = {"five_hour": "5h limit:", "seven_day": "Weekly limit:"}
-        return [line(label, windows[name]["utilization"],
-                     unstarted(label, windows[name]["resets_at"]
-                               and datetime.fromisoformat(
-                                   windows[name]["resets_at"]).timestamp()))
-                for name, label in names.items() if windows.get(name)]
+        return claude_windows(windows)
     except (OSError, http.client.HTTPException, LookupError, ValueError,
             TypeError, AttributeError):
         # The token, the file, or the endpoint is unavailable, or its reply
         # is not the shape read above; asking with a call refreshes the
         # login as a side effect.
         return _claude_by_call()
+
+
+def claude_windows(windows):
+    """Read the current limits format, or legacy windows when limits is absent. Fable is a separate weekly meter."""
+    if isinstance(windows.get("limits"), list):
+        readings = []
+        for limit in windows["limits"]:
+            kind = limit.get("kind")
+            model = ((limit.get("scope") or {}).get("model") or {}).get("display_name")
+            if kind == "session":
+                label, window_kind = "5h limit:", "5h"
+            elif kind == "weekly" and not model:
+                label, window_kind = "Weekly limit:", "week"
+            elif kind == "weekly_scoped" and model == "Fable":
+                label, window_kind = "Weekly Fable limit:", "week_fable"
+            else:
+                continue
+            reset = limit.get("resets_at")
+            window = line(label, limit["percent"],
+                          unstarted(label, datetime.fromisoformat(reset).timestamp() if reset else None))
+            window.kind = window_kind
+            readings.append(window)
+        return readings
+    names = {"five_hour": "5h limit:", "seven_day": "Weekly limit:"}
+    return [line(label, windows[name]["utilization"],
+                 unstarted(label, windows[name]["resets_at"]
+                           and datetime.fromisoformat(windows[name]["resets_at"]).timestamp()))
+            for name, label in names.items() if windows.get(name)]
 
 
 def unstarted(label, resets):
@@ -326,7 +350,7 @@ STAMP = "%Y-%m-%d %H:%M:%S"
 # Each window's percent left and its reset, `YYYY-MM-DD HH:MM`; a blank is
 # a window that gave no reading.
 WINDOWS = [f"{plan}_{kind}" for plan in ("claude", "codex", "agy")
-           for kind in ("5h", "week")]
+           for kind in ("5h", "week")] + ["claude_week_fable"]
 FIELDS = ["time", "note"] + [f"{window}_{part}" for window in WINDOWS
                              for part in ("left", "reset")]
 
@@ -392,13 +416,25 @@ def append(path, fields, row):
 
     Without the lock two processes could each find the file empty and write a header, and on Windows, where an
     append seeks to the end and then writes, one could write its row over the other's (measured)."""
-    text = io.StringIO()
-    writer = csv.DictWriter(text, fields, lineterminator=chr(10))
-    with path.open("ab") as book, locked(book):
-        if book.seek(0, os.SEEK_END) == 0:
+    # Touch without truncating, then read and extend an older schema under the same lock as the append.
+    path.touch(exist_ok=True)
+    with path.open("r+b") as book, locked(book):
+        book.seek(0)
+        previous = next(csv.reader([book.readline().decode("utf-8")]), [])
+        columns = previous + [field for field in fields if field not in previous]
+        text = io.StringIO()
+        writer = csv.DictWriter(text, columns, lineterminator=chr(10))
+        if columns != previous:
             writer.writeheader()
-        writer.writerow(row)
-        book.write(text.getvalue().encode("utf-8"))
+            writer.writerows(csv.DictReader(io.StringIO(book.read().decode("utf-8")), fieldnames=previous))
+            writer.writerow(row)
+            book.seek(0)
+            book.write(text.getvalue().encode("utf-8"))
+            book.truncate()
+        else:
+            writer.writerow(row)
+            book.seek(0, os.SEEK_END)
+            book.write(text.getvalue().encode("utf-8"))
 
 
 @contextlib.contextmanager
@@ -460,7 +496,8 @@ def shown(report, costs=None):
             group = row.strip().removesuffix(" Models").removesuffix(" models")
         elif isinstance(row, Window):
             key = f"{plan.lower()}_{row.kind}" if not group or "Gemini" in group else None
-            rows.append([" ".join(filter(None, (plan, group, row.kind))), f"{row.left}%", f"{row.spare:+}%"]
+            label = LABELS.get(key, " ".join(filter(None, (plan, group, row.kind))))
+            rows.append([label, f"{row.left}%", f"{row.spare:+}%"]
                         + (list(costs.get(key, ("-", "-"))) if costs is not None else [])
                         + [f"in {span(row.resets - time.time())}, at {when(row.resets)}"])
     said = unread(report)
