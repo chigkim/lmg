@@ -328,3 +328,78 @@ def test_two_conversations_alike_but_for_an_image_are_two_conversations():
     def with_image(url):
         return [("user", [{"type": "text", "text": "what is this?"}, {"type": "image", "url": url}])]
     assert gateway.said(with_image("data:image/png;base64,AAA")) != gateway.said(with_image("data:image/png;base64,BBB"))
+
+
+def asked_for_models(monkeypatch, **listers):
+    """What GET /v1/models answers, with these providers' listers and nothing cached."""
+    monkeypatch.setattr(gateway, "log", lambda *parts: None)
+    monkeypatch.setattr(gateway, "LISTED", {})
+    monkeypatch.setattr(gateway, "LISTERS", listers)
+
+    async def asked():
+        app = web.Application()
+        app.add_routes([web.get("/v1/models", gateway.models)])
+        async with test_utils.TestClient(test_utils.TestServer(app)) as client:
+            reply = await client.get("/v1/models")
+            return reply.status, await reply.json()
+    return asyncio.run(asked())
+
+
+def test_the_models_are_what_each_harness_lists(monkeypatch):
+    async def anthropic():
+        return ["sonnet", "claude-sonnet-5-5"]
+
+    async def openai():
+        return ["gpt-6-luna"]
+    status, answer = asked_for_models(monkeypatch, anthropic=anthropic, openai=openai)
+    assert status == 200
+    assert [(m["id"], m["owned_by"]) for m in answer["data"]] == [
+        ("anthropic/sonnet", "anthropic"), ("anthropic/claude-sonnet-5-5", "anthropic"), ("openai/gpt-6-luna", "openai")]
+
+
+def test_a_harness_that_cannot_list_leaves_the_others_models(monkeypatch):
+    async def anthropic():
+        raise gateway.Refused(502, "no claude")
+
+    async def openai():
+        return ["gpt-6-luna"]
+    status, answer = asked_for_models(monkeypatch, anthropic=anthropic, openai=openai)
+    assert status == 200 and [m["id"] for m in answer["data"]] == ["openai/gpt-6-luna"]
+
+
+def test_no_models_from_any_harness_is_a_502(monkeypatch):
+    async def anthropic():
+        raise gateway.Refused(502, "no claude")
+    status, answer = asked_for_models(monkeypatch, anthropic=anthropic)
+    assert status == 502 and "list its models" in answer["error"]["message"]
+
+
+def test_a_list_is_kept_until_it_is_old_and_then_outlives_a_failure(monkeypatch):
+    calls = []
+
+    async def anthropic():
+        calls.append(1)
+        if len(calls) > 1:
+            raise gateway.Refused(502, "gone")
+        return ["sonnet"]
+    monkeypatch.setattr(gateway, "log", lambda *parts: None)
+    monkeypatch.setattr(gateway, "LISTED", {})
+    monkeypatch.setattr(gateway, "LISTERS", {"anthropic": anthropic})
+    assert asyncio.run(gateway.listed("anthropic")) == ["sonnet"]
+    assert asyncio.run(gateway.listed("anthropic")) == ["sonnet"] and len(calls) == 1
+    gateway.LISTED["anthropic"] = (1.0, ["sonnet"])  # asked long ago
+    assert asyncio.run(gateway.listed("anthropic")) == ["sonnet"] and len(calls) == 2
+
+
+def test_proxy_models_prints_each_harness_model_and_exits_1_when_one_cannot_answer(monkeypatch, capsys):
+    async def anthropic():
+        return ["sonnet"]
+
+    async def openai():
+        raise gateway.Refused(401, "no login")
+    monkeypatch.setattr(gateway, "LISTERS", {"anthropic": anthropic, "openai": openai})
+    assert daemon.models(None) == 1
+    seen = capsys.readouterr()
+    assert seen.out == "anthropic/sonnet\n" and "openai: Refused: no login" in seen.err
+    monkeypatch.setattr(gateway, "LISTERS", {"openai": openai})
+    assert daemon.models(None) == 3

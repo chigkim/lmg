@@ -5,12 +5,14 @@
     lmg proxy stop         stop the background gateway and everything it started
     lmg proxy restart      stop, then start
     lmg proxy status       whether it is running, its pid and its log
+    lmg proxy models       the models each harness lists, as /v1/models would; the gateway need not be running
 
 A daemon is known by its port: its pid and console output are in logs/PORT.pid and logs/PORT.log in this project,
 found from this file rather than the working directory, so `stop` and `status` work from any folder. It runs in the
 folder `start` was run from, and reads config.toml and .env there.
 """
 import argparse
+import asyncio
 import contextlib
 import os
 import pathlib
@@ -209,13 +211,34 @@ def status(args):
     return 3
 
 
+def models(args):
+    """Print every model the harnesses list, one provider/NAME a line, asking them now rather than the gateway.
+    Exit 0 when each answered, 1 when one could not (the rest are still printed), 3 when none did."""
+    import aiohttp
+    from . import gateway
+
+    async def asked():
+        os.makedirs(gateway.WORKDIR, exist_ok=True)
+        async with aiohttp.ClientSession() as gateway.HTTP:
+            return await asyncio.gather(*(lister() for lister in gateway.LISTERS.values()), return_exceptions=True)
+    failed = 0
+    for provider, found in zip(gateway.LISTERS, asyncio.run(asked())):
+        if isinstance(found, BaseException):
+            print(f"{provider}: {type(found).__name__}: {found}", file=sys.stderr)
+            failed += 1
+            continue
+        for name in found:
+            print(f"{provider}/{name}")
+    return 3 if failed == len(gateway.LISTERS) else int(bool(failed))
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog="lmg proxy", description=__doc__.split("\n")[0])
-    parser.add_argument("command", nargs="?", default="run", choices=("run", "start", "stop", "restart", "status"))
+    parser.add_argument("command", nargs="?", default="run", choices=("run", "start", "stop", "restart", "status", "models"))
     parser.add_argument("--port", type=int, default=8797)
     parser.add_argument("--config", default="config.toml", help="settings file (default: config.toml)")
     args = parser.parse_args(argv)
     if args.command == "run":
         from .gateway import serve
         return serve(args.port, args.config)
-    return {"start": start, "stop": stop, "restart": restart, "status": status}[args.command](args)
+    return {"start": start, "stop": stop, "restart": restart, "status": status, "models": models}[args.command](args)

@@ -1,6 +1,6 @@
 """lmg: the gateway, the jobs handed to agy, Claude Code and Codex, and the plans they spend.
 
-    lmg proxy [run|start|stop|restart|status]    the gateway: daemon.py
+    lmg proxy [run|start|stop|restart|status|models]    the gateway: daemon.py
     lmg ask agy|claude|codex read|edit PROMPT [ID]   a job, and review, clean and list: ask.py
     lmg usage [NOTE]                             each plan's windows, and a ledger row with a note: usage.py
     lmg usage calls ...                          every call each plan was spent on: calls.py

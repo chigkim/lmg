@@ -33,6 +33,7 @@ import ipaddress
 import json
 import os
 import pathlib
+import re
 import secrets
 import shutil
 import socket
@@ -54,6 +55,8 @@ SERVER = "c"                 # the SDK names a tool mcp__SERVER__NAME
 PREFIX = f"mcp__{SERVER}__"
 IDLE = 30 * 60               # seconds a Claude session is kept with nobody using it
 CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
+CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models"
+LISTED_FOR = 5 * 60          # seconds a provider's list of models is kept before it is asked again
 IMAGE_BYTES = 20 * 1024 * 1024  # the most an image URL may download
 REDIRECTS = 5                   # how many an image URL may take before it is refused
 # Fields the Codex backend accepts; it refuses others (temperature, max_output_tokens, ...).
@@ -652,7 +655,44 @@ async def openai(model, body):
                     yield json.loads(chunk)
 
 
+async def claude_models():
+    """The names `claude --model` takes: each alias the harness offers, and the model it resolves to."""
+    options = ClaudeAgentOptions(setting_sources=[], skills=[], cwd=WORKDIR, cli_path=CLAUDE)
+    async with asyncio.timeout(60):
+        async with ClaudeSDKClient(options) as client:
+            info = await client.get_server_info() or {}
+    names = [n for m in info.get("models") or [] for n in (m.get("value"), m.get("resolvedModel")) if n]
+    return list(dict.fromkeys(n for n in names if n != "default"))
+
+
+async def codex_version():
+    """The installed Codex's version, which its backend wants to know before it says which models it has."""
+    try:
+        child = await asyncio.create_subprocess_exec(shutil.which("codex") or "codex", "--version",
+                                                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(child.communicate(), 30)
+    except (OSError, TimeoutError):
+        raise Refused(502, "codex --version could not be run")
+    found = re.search(rb"\d+\.\d+\.\d+\S*", out)
+    if not found:
+        raise Refused(502, "codex --version gave no version")
+    return found.group().decode()
+
+
+async def codex_models():
+    """The models the Codex backend lists for this login: the ones its own `/model` picker shows."""
+    access, account = codex_login()
+    headers = {"Authorization": f"Bearer {access}", "chatgpt-account-id": account, "originator": "llm-gateway"}
+    async with HTTP.get(CODEX_MODELS_URL, params={"client_version": await codex_version()}, headers=headers) as reply:
+        if reply.status != 200:
+            raise Refused(reply.status, f"the Codex backend answered {reply.status}: {(await reply.text())[:500]}")
+        found = await reply.json()
+    return [m["slug"] for m in found.get("models") or [] if m.get("visibility") == "list" and m.get("supported_in_api", True)]
+
+
 PROVIDERS = {"anthropic": claude, "openai": openai}
+LISTERS = {"anthropic": claude_models, "openai": codex_models}
+LISTED = {}                                      # provider -> (when it was asked, its models)
 
 
 # ---------------------------------------------------------------- Chat Completions, translated
@@ -968,10 +1008,27 @@ async def _chain(head, rest):
         raise Refused(502, "the model's stream ended before the response was finished")
 
 
+async def listed(provider):
+    """PROVIDER's models, asked of its harness at most every LISTED_FOR seconds; the last answer if it cannot be
+    asked now, none if it never could."""
+    when, names = LISTED.get(provider, (0, []))
+    if when and time.monotonic() - when < LISTED_FOR:
+        return names
+    try:
+        names = await LISTERS[provider]()
+    except Exception as e:
+        log(f"  {provider} models: {type(e).__name__}: {e}")
+        return names
+    LISTED[provider] = (time.monotonic(), names)
+    return names
+
+
 async def models(request):
-    names = ["anthropic/sonnet", "anthropic/opus", "anthropic/haiku", "openai/gpt-6-luna", "openai/gpt-6.1-sol"]
-    return web.json_response({"object": "list", "data": [{"id": n, "object": "model", "owned_by": n.split("/")[0]}
-                                                         for n in names]})
+    found = await asyncio.gather(*(listed(p) for p in LISTERS))
+    data = [{"id": f"{p}/{n}", "object": "model", "owned_by": p} for p, names in zip(LISTERS, found) for n in names]
+    if not data:
+        return refusal(502, "no provider could list its models; see the log")
+    return web.json_response({"object": "list", "data": data})
 
 
 async def startup(app):

@@ -4,7 +4,7 @@ One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed
 
 | Command | What it does |
 | --- | --- |
-| `lmg proxy [run\|start\|stop\|restart\|status]` | The gateway. It speaks OpenAI's Responses and Chat Completions APIs, and answers them from a Claude or ChatGPT subscription instead of an API key. |
+| `lmg proxy [run\|start\|stop\|restart\|status\|models]` | The gateway. It speaks OpenAI's Responses and Chat Completions APIs, and answers them from a Claude or ChatGPT subscription instead of an API key. |
 | `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
 | `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), what one task of its harness costs it on average, how many more tasks that leaves, and when each resets. With a note, `word: what` such as `"before: pi x"`, it also adds a row to the ledger, which keeps agy's Gemini group only. Any other word is refused, so a mistyped form writes nothing. `lmg usage --help` lists every form, and each form takes `--help` too. |
 | `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it (`claude code`, `claude -p` and `pi bridge` for Claude; `codex` and `codex exec` for Codex), with tokens and what they would cost on the public API. |
@@ -81,6 +81,8 @@ Every command takes `--port N` (default 8797) and `--config PATH` (default `conf
 The daemon is known by its port. Its pid and console output are in `logs/PORT.pid` and `logs/PORT.log` in this project, found from the script's own location, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
 
 Point any OpenAI-compatible client at `http://127.0.0.1:8797/v1`, with `GATEWAY_API_KEY` as its API key. It serves `/v1/responses`, `/v1/chat/completions` and `/v1/models`.
+
+`lmg proxy models` prints the same list, one `provider/NAME` a line, without the gateway running (exit 1 if a harness could not answer, 3 if none did). `/v1/models` is asked of the harnesses, not written down: each alias `claude --model` offers and the model it resolves to, and the models Codex's backend lists for your login. A list is kept for 5 minutes; a harness that cannot answer leaves out its models, or keeps its last list. Any name `claude --model` or Codex accepts works whether it is listed or not.
 
 Codex takes it as a provider in `~/.codex/config.toml`, with the key in an environment variable rather than the file:
 
