@@ -555,6 +555,20 @@ def said(convo):
     return hashlib.sha256(json.dumps([e[1] for e in convo if e[0] == "user"], sort_keys=True).encode()).hexdigest()
 
 
+def history_hash(convo):
+    """Match the full client history, allowing tools' JSON arguments to be reserialized."""
+    normalized = []
+    for entry in convo:
+        if entry[0] == "call":
+            try:
+                arguments = json.loads(entry[3])
+            except ValueError:
+                arguments = entry[3]
+            entry = (*entry[:3], arguments)
+        normalized.append(entry)
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True).encode()).hexdigest()
+
+
 # ---------------------------------------------------------------- the Claude side
 
 class ClaudeSession:
@@ -565,6 +579,7 @@ class ClaudeSession:
 
     def __init__(self, model, system, tools, effort):
         self.model, self.key, self.said = model, fingerprint(model, system, tools), None
+        self.history = None
         self.custom = {name for name, _, _, custom in tools if custom}
         self.events, self.futures, self.waiting = asyncio.Queue(), {}, {}
         self.blocks, self.stop, self.used, self.closed = {}, None, time.monotonic(), False
@@ -734,6 +749,17 @@ async def claude(model, body):
         tail.append(e)
     owners = {ClaudeSession.paused.get(e[1]) for e in tail}
     if tail and len(owners) == 1 and None not in owners:
+        owner = next(iter(owners))
+        if owner.key != fingerprint(model, system, tools) or owner.history != history_hash(convo[:-len(tail)]):
+            # Compaction can preserve pending call IDs while replacing all the history before them.
+            # Handing back only results would silently keep Claude's old, uncompact conversation.
+            async with owner.lock:
+                if any(ClaudeSession.paused.get(e[1]) is not owner for e in tail):
+                    raise Refused(409, "those tool results were already handed back by another request")
+                owner.close()
+                SESSIONS.discard(owner)
+            owners = set()
+    if tail and len(owners) == 1 and None not in owners:
         session, route, run = owners.pop(), "resumed", {"results": {e[1]: e[2] for e in tail}}
     else:
         news = []
@@ -749,6 +775,10 @@ async def claude(model, body):
             key = (fingerprint(model, system, tools), said(convo[:len(convo) - tail_users]),
                    hashlib.sha256(plain(before[1]).strip().encode()).hexdigest())
         session = ClaudeSession.idle.pop(key, None) if key else None
+        if session and session.history != history_hash(convo[:-tail_users]):
+            session.close()
+            SESSIONS.discard(session)
+            session = None
         if session and not session.closed:
             route, run = "continued", {"send": news}
         else:
@@ -765,6 +795,9 @@ async def claude(model, body):
             raise Refused(409, "those tool results were already handed back by another request")
         session.said = said(convo)
         async for e in session.turn(emitter, **run):
+            if e["type"] == "response.completed":
+                _, reply = entries({"input": emitter.output})
+                session.history = history_hash(convo + reply)
             yield e
 
 

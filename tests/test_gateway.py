@@ -24,6 +24,7 @@ class FakeSession(gateway.ClaudeSession):
 
     def __init__(self, model, system, tools, effort, reply="ok"):
         self.model, self.key, self.said = model, gateway.fingerprint(model, system, tools), None
+        self.history, self.calls = None, []
         self.lock, self.closed, self.handed, self.reply = asyncio.Lock(), False, [], reply
         FakeSession.made.append(self)
 
@@ -32,11 +33,22 @@ class FakeSession(gateway.ClaudeSession):
         self.handed.append(results if results is not None else send)
         for call_id in list(results or {}):
             gateway.ClaudeSession.paused.pop(call_id, None)
-        for e in emitter.text(self.reply):
+        for e in emitter.text(self.reply) if self.reply else []:
             yield e
-        gateway.ClaudeSession.idle[(self.key, self.said, gateway.hashlib.sha256(self.reply.encode()).hexdigest())] = self
+        for call_id, name, arguments in self.calls:
+            gateway.ClaudeSession.paused[call_id] = self
+            for e in emitter.call(call_id, name, arguments, False):
+                yield e
+        if not self.calls:
+            gateway.ClaudeSession.idle[(self.key, self.said, gateway.hashlib.sha256(self.reply.encode()).hexdigest())] = self
         for e in emitter.finish({}):
             yield e
+
+    def close(self):
+        self.closed = True
+        for table in (gateway.ClaudeSession.paused, gateway.ClaudeSession.idle):
+            for key in [key for key, session in table.items() if session is self]:
+                del table[key]
 
 
 @pytest.fixture
@@ -51,7 +63,7 @@ def fake(monkeypatch):
 
 
 async def drained(body):
-    return [e async for e in gateway.claude("sonnet", body)]
+    return [e async for e in gateway.claude(body["model"].split("/", 1)[1], body)]
 
 
 def test_a_conversation_continues_its_own_session(fake):
@@ -75,12 +87,65 @@ def test_tool_results_are_handed_back_once(fake):
         {"type": "message", "role": "user", "content": "go"},
         {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "c1", "output": "done"}]}
+    session.history = gateway.history_hash(gateway.entries(body)[1][:-1])
 
     async def both():
         return await asyncio.gather(drained(body), drained(body), return_exceptions=True)
     outcomes = asyncio.run(both())
     refused = [o for o in outcomes if isinstance(o, gateway.Refused)]
     assert len(refused) == 1 and refused[0].status == 409 and len(session.handed) == 1
+
+
+@pytest.mark.parametrize("changed", [None, "compaction", "assistant", "result", "system", "tools", "model"])
+@pytest.mark.parametrize("parallel", [False, True])
+def test_paused_session_resumes_only_unchanged_history(fake, changed, parallel):
+    async def conversation():
+        await drained(said_to("go"))
+        session = fake.made[0]
+        session.reply, session.calls = "", [("c1", "f", '{ "x": 1 }')]
+        if parallel:
+            session.calls.append(("c2", "g", "{}"))
+        await drained(said_to("go", "ok", "next"))
+        calls = [{"type": "function_call", "call_id": call_id, "name": name,
+                  "arguments": arguments.replace(" ", "")} for call_id, name, arguments in session.calls]
+        history = said_to("go", "ok", "next")["input"] + calls
+        if changed == "compaction":
+            history = [{"role": "user", "content": "Compacted summary"}] + calls
+        elif changed == "assistant":
+            history[1]["content"] = "edited reply"
+        elif changed == "result":
+            history.insert(1, {"type": "function_call_output", "call_id": "old", "output": "edited result"})
+        body = {"model": "anthropic/sonnet", "input": history + [
+            {"type": "function_call_output", "call_id": call["call_id"], "output": "done"} for call in calls]}
+        if changed == "system":
+            body["instructions"] = "new system"
+        elif changed == "tools":
+            body["tools"] = [{"type": "function", "name": "f", "description": "new description"}]
+        elif changed == "model":
+            body["model"] = "anthropic/opus"
+        session.calls = []
+        await drained(body)
+        return session, body
+
+    session, body = asyncio.run(conversation())
+    if changed is None:
+        assert len(fake.made) == 1 and not session.closed
+        call_ids = ["c1", "c2"] if parallel else ["c1"]
+        assert session.handed[-1] == {call_id: [{"type": "text", "text": "done"}] for call_id in call_ids}
+    else:
+        assert len(fake.made) == 2 and session.closed
+        assert session not in gateway.SESSIONS and not gateway.ClaudeSession.paused
+        assert len(session.handed) == 2
+        assert fake.made[-1].handed == [gateway.transcript(gateway.entries(body)[1])]
+
+
+def test_editing_an_earlier_assistant_reply_starts_a_fresh_idle_session(fake):
+    asyncio.run(drained(said_to("hello")))
+    asyncio.run(drained(said_to("hello", "ok", "next")))
+    body = said_to("hello", "edited reply", "next", "ok", "continue")
+    asyncio.run(drained(body))
+    assert len(fake.made) == 2 and fake.made[0].closed
+    assert fake.made[1].handed == [gateway.transcript(gateway.entries(body)[1])]
 
 
 def test_interleaved_tool_call_arguments_stay_with_their_call():
