@@ -632,7 +632,7 @@ class ClaudeSession:
             self.events.put_nowait(("error", "the Claude session ended"))
 
     def _take(self, message):
-        """Turn what the SDK says into ("text" | "call" | "usage" | "pause" | "done" | "error", ...) events."""
+        """Turn SDK messages into text, call, usage_start, usage, pause, done, or error events."""
         if isinstance(message, ResultMessage):
             self.events.put_nowait(("error", message.result or message.subtype) if message.is_error else ("done",))
             return
@@ -641,7 +641,7 @@ class ClaudeSession:
         ev, kind = message.event, message.event.get("type")
         if kind == "message_start":
             self.stop = None
-            self.events.put_nowait(("usage", ev["message"].get("usage") or {}))
+            self.events.put_nowait(("usage_start", ev["message"].get("usage") or {}))
         elif kind == "content_block_start":
             block = ev["content_block"]
             if block.get("type") == "tool_use":
@@ -703,10 +703,13 @@ class ClaudeSession:
             elif event[0] == "call":
                 for e in emitter.call(*event[1:]):
                     yield e
-            elif event[0] == "usage":
+            elif event[0] in ("usage_start", "usage"):
+                if event[0] == "usage_start":
+                    usage = {}
+                # Stream usage fields are cumulative snapshots, not token increments.
                 for k, v in event[1].items():
                     if isinstance(v, int):
-                        usage[k] = usage.get(k, 0) + v
+                        usage[k] = v
             elif event[0] == "error":
                 raise Refused(502, event[1])
             elif event[0] in ("pause", "done"):

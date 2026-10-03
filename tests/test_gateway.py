@@ -160,6 +160,49 @@ def test_interleaved_tool_call_arguments_stay_with_their_call():
     assert [c["choices"][0]["delta"]["tool_calls"][0]["index"] for c in chunks] == [0, 1, 0, 1]
 
 
+@pytest.mark.parametrize("stop", ["end_turn", "tool_use"])
+@pytest.mark.parametrize("repeated_input", [False, True])
+def test_claude_usage_updates_replace_cumulative_counts(monkeypatch, stop, repeated_input):
+    monkeypatch.setattr(gateway.ClaudeSession, "idle", {})
+    monkeypatch.setattr(gateway, "sent_request", lambda *args: None)
+
+    async def turns():
+        session = gateway.ClaudeSession.__new__(gateway.ClaudeSession)
+        session.ready, session.closed, session.events = asyncio.Event(), False, asyncio.Queue()
+        session.ready.set()
+        session.futures, session.sent_system, session.sent_tools = {}, "", []
+        session.key, session.said = "key", "said"
+        responses = []
+        # The first input snapshot comes from the vibegames compaction log: 67,007, not 134,014.
+        for counts, output in [({"input_tokens": 2, "cache_creation_input_tokens": 43207,
+                                 "cache_read_input_tokens": 23798}, 191), ({"input_tokens": 10}, 0)]:
+            raw = [{"type": "message_start", "message": {"usage": {**counts, "output_tokens": 8}}}]
+            for total in (output // 2, output):
+                raw.append({"type": "message_delta", "delta": {"stop_reason": stop},
+                            "usage": {**(counts if repeated_input else {}), "output_tokens": total}})
+            raw.append({"type": "message_stop"})
+            for event in raw:
+                session._take(gateway.StreamEvent(uuid="event", session_id="session", event=event))
+            if stop == "end_turn":
+                session.events.put_nowait(("done",))
+            responses.append([e async for e in session.turn(gateway.Emitter("anthropic/opus"), results={})])
+        return responses
+
+    first, second = asyncio.run(turns())
+    assert first[-1]["response"]["usage"] == {
+        "input_tokens": 67007, "input_tokens_details": {"cached_tokens": 23798},
+        "output_tokens": 191, "total_tokens": 67198}
+    assert second[-1]["response"]["usage"] == {
+        "input_tokens": 10, "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens": 0, "total_tokens": 10}
+    writer = gateway.ChatWriter("anthropic/opus")
+    for event in first:
+        writer.take(event)
+    assert writer.usage["prompt_tokens"] == 67007
+    assert writer.usage["completion_tokens"] == 191
+    assert writer.usage["total_tokens"] == 67198
+
+
 class Body:
     def __init__(self, parsed):
         self.parsed = parsed
