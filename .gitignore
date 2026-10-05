@@ -25,5 +25,5 @@ logs/
 
 .pytest_cache/
 
-# lmg ask jobs: each repository's worktrees and runs
+# lmg ask's worktrees and runs from before it took a folder of your own
 /jobs/

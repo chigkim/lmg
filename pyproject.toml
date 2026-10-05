@@ -1,7 +1,7 @@
 [project]
 name = "llm-gateway"
 version = "0.1.0"
-description = "A loopback LLM gateway, jobs handed to agy, Claude Code and Codex in their own git worktrees, and what each plan has left: one command, lmg."
+description = "A loopback LLM gateway, jobs handed to agy, Claude Code and Codex, and what each plan has left: one command, lmg."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -21,5 +21,5 @@ requires = ["uv_build>=0.12.13,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.pytest.ini_options]
-# Only the tool's own tests: jobs/ holds worktrees of other repositories, with tests of their own.
+# Only the tool's own tests: jobs/, from before lmg ask stopped making worktrees, holds other repositories' tests.
 testpaths = ["tests"]

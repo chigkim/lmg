@@ -1,17 +1,17 @@
 # llm-gateway
 
-One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed to agy, Claude Code or Codex in their own git worktree, and what each subscription plan has left.
+One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed to agy, Claude Code or Codex in a folder of your own, and what each subscription plan has left.
 
 | Command | What it does |
 | --- | --- |
 | `lmg proxy [run\|start\|stop\|restart\|status\|models]` | The gateway. It speaks OpenAI's Responses and Chat Completions APIs, and answers them from a Claude or ChatGPT subscription instead of an API key. |
-| `lmg ask HARNESS MODE PROMPT [ID]` | Runs one job, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA`, `lmg ask clean HARNESS NAME` and `lmg ask list` are its other forms. |
+| `lmg ask HARNESS MODE FOLDER [ID]` | Runs the job in `FOLDER/task.md`, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA FOLDER` is its other form. |
 | `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's two model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), what one task of its harness costs it on average, how many more tasks that leaves, and when each resets. With a note, `word: what` such as `"before: pi x"`, it also adds a row to the ledger, which keeps agy's Gemini group only. Any other word is refused, so a mistyped form writes nothing. `lmg usage --help` lists every form, and each form takes `--help` too. |
 | `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it (`claude code`, `claude -p` and `pi bridge` for Claude; `codex` and `codex exec` for Codex), with tokens and what they would cost on the public API. |
 | `lmg usage tasks` | Every task in the ledger with what it took from each window, then what a task costs each window and how many tasks that is measured from. A cost from fewer than five tasks is marked `~`, here and in `lmg usage`. |
 | `lmg usage worth` | What each window is worth in dollars, sized from the ledger and the clients' records, and how much of it is spent. It takes no options but `--help`, and it is slower than the rest (about 9 seconds), since it reads every record back to a week before the ledger's first row. |
 
-Three things run a model: `lmg proxy`, every form of `lmg ask` but `clean` and `list` (`review` included), and the Haiku fallback of `lmg usage` described below. `lmg usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored; a redirect is refused rather than followed, because following it would send the token on. When that request cannot be made or fails -- an expired token, no credentials file, no network, an error status, a broken reply or one of another shape -- it falls back to a one-word Haiku call, which costs a little and refreshes the login.
+Three things run a model: `lmg proxy`, every form of `lmg ask` (`review` included), and the Haiku fallback of `lmg usage` described below. `lmg usage` asks `codex app-server` for Codex's limits, reads agy's quota out of the log `agy models` writes, and asks the endpoint Claude Code's own `/usage` reads, with the CLI's login token held in memory for that one request and never printed or stored; a redirect is refused rather than followed, because following it would send the token on. When that request cannot be made or fails -- an expired token, no credentials file, no network, an error status, a broken reply or one of another shape -- it falls back to a one-word Haiku call, which costs a little and refreshes the login.
 
 ## Every command
 
@@ -27,23 +27,18 @@ lmg:
     options:
       --port N:                      # default 8797
       --config PATH:                 # default config.toml
-  ask:                               # a job in its own git worktree
+  ask:                               # a job in a folder of your own
     agy|claude|codex:
       read|edit:
-        PROMPT:                      # the prompt file; the job is named after it
-          ID:                        # optional: follow up that session in the same worktree
+        FOLDER:                      # holds task.md; the job is named after it, and its answers go in it
+          ID:                        # optional: follow up that session
     review:
-      SHA:                           # codex exec review of one commit
-    clean:
-      agy|claude|codex:
-        NAME:                        # remove the job's worktree and branch
-    list:                            # every open job: its runs, answer, changes and id
+      SHA:
+        FOLDER:                      # codex exec review of one commit, its answer in FOLDER
     options:
-      --repo PATH:                   # default: the repository the current folder is in
-      --home PATH:                   # where worktrees/ and runs/ go; default homes.toml's, else jobs/REPO here
       --model NAME:                  # default gemini-3.8-flash-medium, claude-opus-5-5 or gpt-6.1-sol
       --timeout T:                   # agy's print timeout; default 3600s
-      --force:                       # clean only: remove it even with unmerged work
+      --force:                       # run an edit job in a repository's main checkout
   usage:                             # every window in one table: percent left, spare, task cost, tasks left, resets
     NOTE:                            # optional: also add a ledger row; "word: what", e.g. "before: pi x"
     calls:                           # every call each plan was spent on, and its API cost
@@ -184,38 +179,47 @@ It checks a client-run tool round trip, a follow-up and streaming on both APIs, 
 ## Jobs
 
 ```bash
-lmg ask agy|claude|codex read|edit PROMPT [ID]   # a job, or a follow-up to the one ID names
-lmg ask review SHA                               # codex exec review of one commit
-lmg ask clean agy|claude|codex NAME [--force]    # remove a job's worktree and branch, if nothing is lost
-lmg ask list                                     # every open job: its runs, answer, changes and id
+lmg ask agy|claude|codex read|edit FOLDER [ID]   # FOLDER/task.md as a job, or a follow-up to the one ID names
+lmg ask review SHA FOLDER                        # codex exec review of one commit, its answer in FOLDER
 ```
 
 | Option | What it does |
 | --- | --- |
-| `--repo PATH` | The repository, instead of the one the current folder is in. |
-| `--home PATH` | Where `worktrees/` and `runs/` go, instead of the repository's home. |
 | `--model NAME` | The harness's model, instead of its default: `gemini-3.8-flash-medium`, `claude-opus-5-5`, `gpt-6.1-sol`. |
 | `--timeout T` | agy's print timeout, `3600s` unless given. |
-| `--force` | `clean` only: remove the worktree even though it holds uncommitted files or unmerged commits. |
+| `--force` | Run an edit job in a repository's main checkout, which is refused without it. |
 
-A repository's home is `jobs/REPO` in this checkout, gitignored, so every repository's jobs are in one place beside the tool, and `pytest` here collects only `tests/`. Two repositories of the same folder name would share a home; `src/llm_gateway/homes.toml`, gitignored, names another for a repository, and a relative home is taken from the repository:
+A job is a folder of your own with a `task.md` in it (`TASK.md` will do). `lmg ask` makes no worktree. If you want one, make it first and put the folder inside it:
 
-```toml
-[homes]
-"D:/code/game" = ".."    # D:/code/worktrees and D:/code/runs
+```bash
+git worktree add ../wt-fix -b fix
+mkdir ../wt-fix/jobs/fix-ledger        # then write ../wt-fix/jobs/fix-ledger/task.md
+lmg ask codex edit ../wt-fix/jobs/fix-ledger
 ```
 
-A job is named after its prompt file, less `.md` and a trailing `-prompt`: `fix-ledger-prompt.md` is the job `fix-ledger`.
+1. `lmg ask` finds the folder's `task.md` and checks the harness. The harness runs at the top of the git repository the folder is in, or in the folder itself if it is in none, so a folder inside a worktree gets that whole worktree to work in. An edit job whose folder is in a repository's main checkout is refused unless given `--force`, since it would change your real files.
+2. It takes a reading as `before: HARNESS NAME [pid N]`, NAME being the folder's name, with `(resumed)` after it on a follow-up, before anything is written, so a reading that cannot be written leaves no run half made. The pid pairs it with this job's own `after:` reading.
+3. Run N claims its number by making `responseN.jsonl` (two runs started at once each get a number of their own), copies `task.md` to `taskN.md`, and runs the harness told to read `taskN.md` by its full path and that its final message is saved as `responseN.md`. `task.md` is left in place, so you can edit it for the next run while this one goes. Stopped with Ctrl-C, the harness is killed and the job reads what it streamed as a run stopped part way.
+4. The harness's final message is the answer, `responseN.md`, written by `lmg ask` rather than the agent, which in read mode cannot write. Its raw output is `responseN.jsonl`, and Codex's log `responseN.log`. The raw output is streamed as the job runs, so a run stopped part way still has the session id, which is printed with the follow-up command.
+5. It takes the `after:` reading, and one row goes to `src/llm_gateway/token-ledger.csv`: time, job, repository, model, uncached input, cache reads, cache writes, output, and the public-API cost.
 
-1. `lmg ask` checks the harness and the worktree: `HOME/worktrees/HARNESS-NAME`, a worktree on a branch of that name at `HEAD`, reused by a follow-up. A new job whose worktree is still there from an earlier one is refused, rather than handed that job's changes.
-2. It takes a reading as `before: HARNESS NAME [pid N]`, with `(resumed)` after the name on a follow-up, before anything is made, so a reading that cannot be written leaves no job half made. The pid pairs it with this job's own `after:` reading.
-3. It makes the worktree if it is new, moves the prompt in as `TASK.md`, keeps a numbered copy as `HOME/runs/HARNESS/NAME-N.task.md` (two runs started at once each claim a number of their own), runs the harness in the worktree told only to read `TASK.md`, and takes the `after:` reading. A repository that tracks a `TASK.md` of its own is refused a job, since the prompt would be written over it. Stopped with Ctrl-C, the harness is killed and the job reads what it streamed as a run stopped part way.
-4. The harness's last message is the answer, `HOME/runs/HARNESS/NAME-N.md`, beside its raw output, `NAME-N.jsonl`. The session id to follow up with is printed. The raw output is streamed as the job runs, so a job stopped part way still has its id, and `lmg ask list` shows it, or the one an earlier run named when the latest said none.
-5. One row goes to `src/llm_gateway/token-ledger.csv`: time, job, repository, model, uncached input, cache reads, cache writes, output, and the public-API cost.
+A folder after a job and one follow-up:
 
-A read job leaves nothing to merge, so when it ends its worktree and branch are removed, unless `clean` would refuse to, and then it says why and keeps them. A follow-up to a read job makes the worktree again at `HEAD`; the harness resumes the session by its id, not by the folder. Edit work is left as an uncommitted diff in the worktree for you to review, test and merge. `lmg ask clean HARNESS NAME` removes the worktree and its branch, and refuses while it holds uncommitted files (`TASK.md` aside), commits that `HEAD` has not got, or gitignored files the job made, unless given `--force`. It counts commits on the branch and wherever the worktree's `HEAD` is, so work an agent committed on a detached `HEAD` is not lost, and a git call that fails refuses rather than reading as nothing to lose. Git deletes a worktree's ignored files with it, so an ignored file is left out of the count only where the main checkout has the same file, byte for byte -- a file of the same name with other contents is the job's work, and a folder both have, such as `logs/`, is looked into file by file -- or where it lies in a virtual environment, a cache such as `.pytest_cache` or a `__pycache__`: a local copy of something rebuilt at will.
+```
+task.md          # yours to edit
+task1.md         # what run 1 was told
+response1.md
+response1.jsonl
+task2.md
+response2.md
+response2.jsonl
+```
 
-A follow-up is a new prompt file of the same name plus the id: `lmg ask codex edit fix-ledger-prompt.md <id>`. It runs in the same worktree, made again if a read job's was removed, and may change mode. The agent is told that `TASK.md` now holds a new task, because a session told only to read it again answered the old one from memory. An agy follow-up books only its own tokens: agy's count runs over the whole conversation, so the last earlier run of the same conversation is taken off it.
+A follow-up is the same folder, with `task.md` edited, plus the id: `lmg ask codex edit ../wt-fix/jobs/fix-ledger <id>`. It may change mode. The agent is told that `taskN.md` holds a new task, a file it has not read, because a session told to read the same file again answered the old task from memory. An agy or Codex follow-up books only its own tokens: their counts run over the whole session, so the last earlier run of the same session in the folder is taken off it.
+
+A review needs a folder in the repository to review, and numbers its `responseN` files in it the same way.
+
+A folder inside a repository shows up there as untracked files. Ignore it in that repository's `.gitignore`, or keep the folder in a worktree you throw away.
 
 ### Modes
 
@@ -227,7 +231,7 @@ A follow-up is a new prompt file of the same name plus the id: `lmg ask codex ed
 | claude | Only `Read`, `Grep` and `Glob`, and no MCP servers. Hooks in your settings or the repository's still run. | `--dangerously-skip-permissions` |
 | codex | The read-only sandbox, where it may still run commands to read with. | `--dangerously-bypass-approvals-and-sandbox` |
 
-A worktree is where a job starts, not a fence. An edit job can reach anything your account can, and a read job can read files outside the worktree.
+Where a job runs is where it starts, not a fence. An edit job can reach anything your account can, and a read job can read files outside it.
 
 A new worktree holds what git tracks and nothing else: no `.venv`, no `node_modules`, no gitignored config or keys. An edit job sets up what it needs, such as the `.venv` a first `uv run` makes from `uv.lock`. A read job cannot, so it cannot run the tests.
 

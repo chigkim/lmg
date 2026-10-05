@@ -1,14 +1,11 @@
-"""Hand one job to agy, Claude Code or Codex, in its own git worktree, with a usage reading either side.
+"""Hand one job to agy, Claude Code or Codex, in a folder of your own, with a usage reading either side.
 
-    lmg ask agy|claude|codex read|edit PROMPT [ID]   # a job, or a follow-up to the one ID names
-    lmg ask review SHA                               # codex exec review of one commit
-    lmg ask clean agy|claude|codex NAME [--force]    # remove a job's worktree and branch, if nothing is lost
-    lmg ask list                                     # every open job: its runs, answer, changes and id
+    lmg ask agy|claude|codex read|edit FOLDER [ID]   # FOLDER/task.md as a job, or a follow-up to the one ID names
+    lmg ask review SHA FOLDER                        # codex exec review of one commit, its answer in FOLDER
 
-    --repo PATH    the repository, instead of the one the current folder is in
-    --home PATH    where worktrees/ and runs/ go, instead of the repository's home
     --model NAME   the harness's model, instead of DEFAULTS
     --timeout T    agy's print timeout, 3600s unless given
+    --force        an edit job in a repository's main checkout, which is refused without it
 
 A mode is what the agent may do. `read` is read and search files, nothing else. `edit` bypasses every permission
 prompt and sandbox, so it may write, edit and run anything the machine lets it:
@@ -17,34 +14,27 @@ prompt and sandbox, so it may write, edit and run anything the machine lets it:
     claude  read: only Read, Grep and Glob, and no MCP servers
     codex   read: the read-only sandbox, where it still runs commands to read with
 
-A repository's home is jobs/REPO in this tool's own checkout, gitignored, unless `homes.toml` beside this file names
-another:
+The job is FOLDER/task.md, or TASK.md. The harness runs at the top of the git repository FOLDER is in, or in FOLDER
+itself if it is in none, so a folder inside a worktree you made gets that worktree to work in. No worktree is made
+here: an edit job changes the files where it runs, so one in a repository's main checkout is refused unless --force.
 
-    [homes]
-    "D:/code/game" = "D:/code"      # a relative home is taken from the repository
+Run N copies task.md to FOLDER/taskN.md and tells the agent to read that copy, so task.md can be edited for the next
+run while this one goes. The harness's final message is the answer, FOLDER/responseN.md, written here rather than by
+the agent, which in read mode cannot write; its raw output is responseN.jsonl, and codex's log responseN.log. The raw
+output is streamed, so a run stopped part way still holds the id to follow up with, which is printed. A follow-up is
+the same FOLDER, task.md edited, plus that id, and may change mode. A review numbers its files in FOLDER the same way.
 
-The job is named after the prompt file, less `.md` and a trailing `-prompt`. Its worktree is
-HOME/worktrees/HARNESS-NAME, on a branch of that name at HEAD, made on first use and reused by a follow-up. A read
-job's worktree is removed when it ends, unless it holds something `clean` would refuse to lose, and a follow-up makes
-it again at HEAD. The
-prompt is moved in as TASK.md, with a numbered copy kept as HOME/runs/HARNESS/NAME-N.task.md, and the agent is
-told only to read TASK.md there. The harness's final message is the answer, HOME/runs/HARNESS/NAME-N.md, beside
-its raw output; the id to follow up with is printed. The raw output is streamed, so a run stopped part way still
-holds the id, and `list` finds it there. A follow-up is a new prompt file of the same name, plus that
-id, and may change mode.
-
-A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME [pid N]` and `after: ...`, so the
-harness is what `lmg usage` costs it under; a review's note is `codex review SHA`. One row a job goes to `token-ledger.csv`: the repository, the uncached input,
-cache reads, cache writes and output, which add up to what the model read and wrote, and what they would cost on
-the public API at the rates in `prices.csv`. All three sit beside this file.
+A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME [pid N]` and `after: ...`, NAME
+being FOLDER's name, so the harness is what `lmg usage` costs it under; a review's note is `codex review SHA`. One row
+a job goes to `token-ledger.csv`: the repository, the uncached input, cache reads, cache writes and output, which add
+up to what the model read and wrote, and what they would cost on the public API at the rates in `prices.csv`. All
+three sit beside this file.
 """
 import argparse
-import filecmp
 import json
 import os
 import pathlib
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -55,12 +45,8 @@ from . import calls, usage
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6.1-sol"}
 TOKENS = pathlib.Path(__file__).parent / "token-ledger.csv"
-HOMES = pathlib.Path(__file__).parent / "homes.toml"
-# The tool's own checkout, src/llm_gateway/ask.py up two: it is installed editable, so this is the repository.
-JOBS = pathlib.Path(__file__).resolve().parents[2] / "jobs"
 TOKEN_FIELDS = ["time", "note", "repo", "model", "input", "cache_read", "cache_write", "cache_write_1h", "output", "usd"]
 
-ASK = "Read TASK.md in this folder and do what it says."
 # Codex reads by running commands, which its sandbox allows, so it is told only not to write; the other two read with
 # tools, and a command refused ends an agy run with no answer.
 READ_ONLY = {
@@ -74,18 +60,16 @@ class Problem(Exception):
     """A job that cannot be started: said in one line, exit 2."""
 
 
-def job_name(prompt):
-    name = pathlib.Path(prompt).name
-    name = name[:-3] if name.endswith(".md") else name
-    return name[:-len("-prompt")] if name.endswith("-prompt") else name
+ASK = "Read {task} and do what it says."
+# A follow-up told only to read its task again answered the old one from memory (measured); the copy it is pointed
+# at is a file it has not read.
+AGAIN = "{task} holds a new task, replacing the one before: read it and do what it says now."
+# The answer is the final message, which in read mode the agent could not write to a file anyway.
+SAVED = " Your final message is saved as {answer} for you, so put your full answer in it."
 
 
-# A follow-up that said ASK again was answered from the old TASK.md the session had already read (measured).
-AGAIN = "TASK.md now holds a new task, replacing the one before: read it again and do what it says now."
-
-
-def ask_text(harness, mode, resume=None):
-    text = AGAIN if resume else ASK
+def ask_text(harness, mode, task, answer, resume=None):
+    text = (AGAIN if resume else ASK).format(task=task) + SAVED.format(answer=pathlib.Path(answer).name)
     if mode == "edit":
         return text
     return text + READ_ONLY["codex" if harness == "codex" else "other"]
@@ -102,21 +86,20 @@ def flags(harness, mode):
     return [] if mode == "read" else ["--dangerously-skip-permissions"]
 
 
-def command(harness, mode, model, tree, answer, resume=None, timeout="3600s"):
-    """The argv that runs one job in TREE. A codex resume keeps neither sandbox nor folder, so the sandbox is set again."""
-    ask = ask_text(harness, mode, resume)
+def command(harness, mode, model, cwd, task, answer, resume=None, timeout="3600s"):
+    """The argv that runs one job in CWD. A codex resume keeps neither sandbox nor folder, so the sandbox is set again."""
+    ask = ask_text(harness, mode, task, answer, resume)
     if harness == "codex":
         if resume:
             again = ["-c", 'sandbox_mode="read-only"'] if mode == "read" else flags(harness, mode)
             return ["codex", "exec", "resume", resume, "--json", "-m", model, *again, "-o", str(answer), ask]
-        return ["codex", "exec", "--json", "-m", model, *flags(harness, mode), "-C", str(tree), "-o", str(answer), ask]
+        return ["codex", "exec", "--json", "-m", model, *flags(harness, mode), "-C", str(cwd), "-o", str(answer), ask]
     # The prompt goes straight after -p: --tools takes several values and would swallow a prompt that followed it.
     if harness == "claude":
         return ["claude", "-p", ask, "--output-format", "stream-json", "--verbose", "--model", model,
                 *flags(harness, mode), *(["--resume", resume] if resume else [])]
-    return ["agy", *flags(harness, mode), "--model", model, "--print-timeout", timeout, "--add-dir", str(tree),
+    return ["agy", *flags(harness, mode), "--model", model, "--print-timeout", timeout, "--add-dir", str(cwd),
             "--output-format", "stream-json", *(["--conversation", resume] if resume else []), "-p", ask]
-
 
 
 def json_in(text):
@@ -221,7 +204,7 @@ def read_agy(text, before=""):
     trouble = ""
     # agy says SUCCESS and exits 0 when --print-timeout cuts a turn off.
     if any("print timeout after" in line for line in text.splitlines() if not line.lstrip().startswith("{")):
-        trouble = "timed out: the answer and the worktree are partial; follow up with the id"
+        trouble = "timed out: the answer and the work are partial; follow up with the id"
     elif out.get("denied_actions"):
         denied = ", ".join(d.get("display_name") or d.get("action", "?") for d in out["denied_actions"])
         trouble = f"denied {denied}: read mode refused it and the run ended there"
@@ -263,15 +246,6 @@ def booked(note, repo, model, spent):
         return f"tokens not booked: {problem}"
 
 
-def checked(*args, cwd):
-    """`git`'s output, or a Problem when it fails: where the answer decides what may be deleted, a failed call read
-    as empty output would read as nothing to lose."""
-    done = git(*args, cwd=cwd)
-    if done.returncode:
-        raise Problem(f"git {' '.join(args)} failed in {cwd}: {done.stderr.strip()}")
-    return done.stdout
-
-
 def git(*args, cwd):
     # Git for Windows prints paths in UTF-8, which the ANSI code page would mangle.
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
@@ -285,65 +259,36 @@ def toplevel(folder):
     return pathlib.Path(found.stdout.strip()).resolve()
 
 
-def common(folder):
-    """The shared .git folder of the repository FOLDER is a worktree of."""
-    found = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=folder)
-    return pathlib.Path(found.stdout.strip()).resolve() if found.returncode == 0 else None
+def workplace(folder):
+    """Where a job in FOLDER runs: the top of the git repository FOLDER is in, else FOLDER itself."""
+    found = git("rev-parse", "--show-toplevel", cwd=folder)
+    return pathlib.Path(found.stdout.strip()).resolve() if found.returncode == 0 else folder
 
 
-def worktree(repo, tree, resume):
-    """Whether TREE is still to be made, having checked it: a fresh job is refused one left by an earlier job, which
-    would hand it that job's changes as its own. A follow-up whose worktree is gone, as a read job's is once it ends,
-    has it made again at HEAD; the session it resumes is the harness's, not the folder's."""
-    if tree.exists():
-        if common(tree) != common(repo):
-            raise Problem(f"{tree} is there but is not a worktree of {repo}")
-        if not resume:
-            raise Problem(f"{tree} is left from an earlier job: follow it up with its id (`lmg ask list`), or clean it")
+def main_checkout(folder):
+    """Whether FOLDER is a repository's main working tree, not a worktree of it: its git folder is the shared one."""
+    found = git("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", cwd=folder)
+    if found.returncode:
         return False
-    return True
+    own, shared = (pathlib.Path(line).resolve() for line in found.stdout.splitlines()[:2])
+    return own == shared
 
 
-def make(repo, tree):
-    """Make TREE a worktree of REPO at HEAD, on a branch of its name."""
-    made = git("worktree", "add", "-q", str(tree), "-b", tree.name, "HEAD", cwd=repo)
-    if made.returncode:
-        raise Problem(made.stderr.strip() or f"could not make {tree}")
+def task_of(folder):
+    """FOLDER's task.md, by whatever case its name is in."""
+    for path in sorted(folder.iterdir()):
+        if path.name.lower() == "task.md" and path.is_file():
+            return path
+    raise Problem(f"no task.md in {folder}")
 
 
-def task_copy(runs, name, n):
-    """Where run N of job NAME keeps its prompt. NAME-N.task.md, not NAME-task-N.md, which a job named NAME-task
-    would write its answer over: an answer ends in its run number and this in .task, so no name makes them meet."""
-    return runs / f"{name}-{n}.task.md"
-
-
-def numbered(folder, name):
-    n = 1
-    while task_copy(folder, name, n).exists():
-        n += 1
-    return n
-
-
-def reserved(folder, name, prompt):
-    """The first free run number of job NAME, claimed by writing PROMPT as its task copy in one exclusive create, so
-    two runs of one job started at once cannot take the same number and write over each other's records."""
-    n = numbered(folder, name)
-    while True:
-        try:
-            with task_copy(folder, name, n).open("xb") as copy:
-                copy.write(prompt)
-            return n
-        except FileExistsError:
-            n += 1
-
-
-def claimed(folder, stem):
-    """The first FOLDER/STEM-N.jsonl free, made empty in one exclusive create so a review started beside it cannot
-    take the same N; the N."""
+def claimed(folder):
+    """The first FOLDER/responseN.jsonl free, made empty in one exclusive create so a run started beside it cannot
+    take the same N; the N. Every run writes its raw output there, a review's and one stopped part way included."""
     n = 1
     while True:
         try:
-            (folder / f"{stem}-{n}.jsonl").open("xb").close()
+            (folder / f"response{n}.jsonl").open("xb").close()
             return n
         except FileExistsError:
             n += 1
@@ -446,89 +391,84 @@ def totalled(harness, text):
     return (codex_usage(text)[1] if harness == "codex" else final(harness, text).get("usage")) is not None
 
 
-def last_of(harness, runs, name, n, resume):
+def last_of(harness, folder, n, resume):
     """The stream of the latest run before N of the session RESUME that has a usage total, or '' if none is kept.
     A run stopped before its total is passed over, so its tokens are booked by the next run that has one."""
     for earlier in range(n - 1, 0, -1):
-        path = runs / f"{name}-{earlier}.jsonl"
+        path = folder / f"response{earlier}.jsonl"
         text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
         if text and session(harness, text) == resume and totalled(harness, text):
             return text
     return ""
 
 
-def job(harness, mode, prompt, resume, repo, home, model, timeout):
-    prompt = pathlib.Path(prompt).resolve()
-    if not prompt.is_file():
-        raise Problem(f"no prompt file {prompt}")
-    # The prompt is moved in over TASK.md: a tracked one would be overwritten, and its change taken for the job's.
-    if git("ls-files", "--error-unmatch", "TASK.md", cwd=repo).returncode == 0:
-        raise Problem(f"{repo} tracks a TASK.md of its own, which a job's prompt would be written over")
+def folder_of(folder):
+    folder = pathlib.Path(folder).resolve()
+    if not folder.is_dir():
+        raise Problem(f"no folder {folder}")
+    return folder
+
+
+def job(harness, mode, folder, resume, model, timeout, force=False):
+    folder = folder_of(folder)
+    task = task_of(folder)
     installed(harness)
-    name = job_name(prompt)
-    tree = home / "worktrees" / f"{harness}-{name}"
-    runs = home / "runs" / harness
-    note = f"{harness} {name}" + (" (resumed)" if resume else "") + paired()
-    fresh = worktree(repo, tree, resume)
-    # After the checks, which may refuse the job, and before anything is made or moved, so a reading that fails
-    # (a ledger open in Excel) leaves no job half made.
+    cwd = workplace(folder)
+    if mode == "edit" and not force and main_checkout(cwd):
+        raise Problem(f"{cwd} is a repository's main checkout, whose files an edit job would change: make a worktree"
+                      " and put the folder in it, or give --force")
+    note = f"{harness} {folder.name}" + (" (resumed)" if resume else "") + paired()
+    # After the checks, which may refuse the job, and before anything is written, so a reading that fails (a ledger
+    # open in Excel) leaves no run half made.
     reading("before", note)
-    if fresh:
-        make(repo, tree)
-    runs.mkdir(parents=True, exist_ok=True)
-    n = reserved(runs, name, prompt.read_bytes())
-    shutil.move(prompt, tree / "TASK.md")  # os.replace cannot cross drives
-    # Each path is named whole: with_suffix would take a dot in the job's name for the start of a suffix.
-    answer, raw, log = (runs / f"{name}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
-    print(f"{harness} {mode}, {model}, in {tree}", flush=True)
-    argv = command(harness, mode, model, tree, answer, resume, timeout)
+    n = claimed(folder)
+    copy = folder / f"task{n}.md"
+    copy.write_bytes(task.read_bytes())
+    answer, raw, log = (folder / f"response{n}.{kind}" for kind in ("md", "jsonl", "log"))
+    print(f"{harness} {mode}, {model}, in {cwd}", flush=True)
+    argv = command(harness, mode, model, cwd, copy, answer, resume, timeout)
     lines = []
     if harness == "codex":
-        status = run(argv, tree, raw, log)
-        thread, spent = read_codex(raw.read_text(encoding="utf-8", errors="replace"),
-                                   last_of(harness, runs, name, n, resume) if resume else "")
-        lines.append(f"session id: {thread}")
+        status = run(argv, cwd, raw, log)
+        sid, spent = read_codex(raw.read_text(encoding="utf-8", errors="replace"),
+                                last_of(harness, folder, n, resume) if resume else "")
+        lines.append(f"session id: {sid}")
     else:
-        status = run(argv, tree, raw)
+        status = run(argv, cwd, raw)
         text = raw.read_text(encoding="utf-8", errors="replace")
         if harness == "claude":
             said, sid, spent, trouble = read_claude(text)
             lines.append(f"session id: {sid}")
         else:
-            said, sid, spent, trouble = read_agy(text, last_of(harness, runs, name, n, resume) if resume else "")
+            said, sid, spent, trouble = read_agy(text, last_of(harness, folder, n, resume) if resume else "")
             lines.append(f"conversation id: {sid}")
         if trouble:
             lines.append(f"{harness} {trouble}")
             status = status or (124 if trouble.startswith("timed") else 1)
         answer.write_text(said, encoding="utf-8")
     if spent:
-        lines.append(booked(note, repo.name, model, spent))
-    lines.append(f"answer: {answer}; work: {tree}")
+        lines.append(booked(note, cwd.name, model, spent))
+    lines.append(f"answer: {answer}")
+    if sid:
+        lines.append(f"follow up: edit {task.name}, then lmg ask {harness} read|edit {folder} {sid}")
     print("\n".join(lines), flush=True)
-    if mode == "read":
-        # A read job leaves nothing to merge, so its worktree goes now, unless clean finds something it would lose.
-        try:
-            clean(harness, name, repo, home)
-            return status, note, None
-        except Problem as kept:
-            print(f"kept the worktree: {kept}", flush=True)
-    return status, note, (harness, name)
+    return status, note
 
 
-def review(sha, repo, home, model):
+def review(sha, folder, model):
+    folder = folder_of(folder)
+    repo = toplevel(folder)
     found = git("rev-parse", "-q", "--verify", f"{sha}^{{commit}}", cwd=repo)
     if found.returncode:
         raise Problem(f"no commit {sha} in {repo}")
     installed("codex")
-    # Named after the commit's own hash, so `v1.2` or `origin/main` is neither a suffix nor a folder.
+    # Named after the commit's own hash in the note, so `v1.2` or `origin/main` reads the same as its hash.
     sha = found.stdout.strip()[:12]
-    runs = home / "runs" / "codex"
-    runs.mkdir(parents=True, exist_ok=True)
-    # By the raw output, which every run writes; codex writes the answer only when it finishes.
-    n = claimed(runs, f"review-{sha}")
-    answer, raw, log = (runs / f"review-{sha}-{n}.{kind}" for kind in ("md", "jsonl", "log"))
     note = f"codex review {sha}" + paired()
     reading("before", note)
+    # By the raw output, which every run writes; codex writes the answer only when it finishes.
+    n = claimed(folder)
+    answer, raw, log = (folder / f"response{n}.{kind}" for kind in ("md", "jsonl", "log"))
     started = time.time()
     status = run(["codex", "exec", "-m", model, "-s", "read-only", "-o", str(answer), "review",
                   "--json", "--commit", sha], repo, raw, log)
@@ -539,7 +479,7 @@ def review(sha, repo, home, model):
     if spent:
         print(booked(note, repo.name, model, spent))
     print(f"answer: {answer}")
-    return status, note, None
+    return status, note
 
 
 def child_usage(thread, since, sessions=None):
@@ -562,126 +502,13 @@ def child_usage(thread, since, sessions=None):
     return None
 
 
-def changes(tree):
-    """TREE's uncommitted changes, the untracked TASK.md the prompt was moved in as left out, as `git status
-    --porcelain` lines. A repository that tracks a TASK.md of its own is refused a job (`job`), so this one is ours."""
-    return [line for line in checked("status", "--porcelain", cwd=tree).splitlines() if line != "?? TASK.md"]
-
-
-def made(tree, repo):
-    """What git ignores in TREE that REPO's own checkout has no path for, so the job made it: a results file, a
-    config it wrote. `git worktree remove` deletes ignored files, with or without its --force (measured). A file the
-    checkout has too, byte for byte, is left out, file by file: a folder both have, logs/ say, is looked into, since
-    a file the job wrote there is lost all the same, and a file of the same name with other contents is the job's
-    work too. A virtual environment, a cache or a __pycache__ is a local copy of something
-    rebuilt at will, and is left out whole. -z, because git quotes a path with a space in it otherwise."""
-    entries = checked("status", "--porcelain", "-z", "--ignored", "--untracked-files=all", cwd=tree).split("\0")
-    return [path for path in (entry[3:] for entry in entries if entry.startswith("!! "))
-            if not rebuilt(tree, path) and not copied(tree / path, repo / path)]
-
-
-def copied(ours, theirs):
-    """Whether the file OURS is a copy of THEIRS, so removing it loses nothing."""
-    return theirs.is_file() and ours.is_file() and filecmp.cmp(ours, theirs, shallow=False)
-
-
-def rebuilt(tree, path):
-    """Whether PATH, under TREE, lies in a __pycache__, or in a folder a pyvenv.cfg marks a virtual environment or a
-    CACHEDIR.TAG a cache, as .pytest_cache is."""
-    parts = pathlib.PurePosixPath(path).parts
-    return "__pycache__" in parts or any((tree.joinpath(*parts[:i]) / marker).exists()
-                                         for i in range(1, len(parts)) for marker in ("pyvenv.cfg", "CACHEDIR.TAG"))
-
-
-def clean(harness, name, repo, home, force=False):
-    """Remove a job's worktree and branch; unless FORCE, not while it holds work that would be lost with them."""
-    tree = home / "worktrees" / f"{harness}-{name}"
-    if not tree.exists():
-        raise Problem(f"no worktree {tree}")
-    if common(tree) != common(repo):
-        raise Problem(f"{tree} is not a worktree of {repo}")
-    if not force:
-        # The branch and wherever the worktree's HEAD is: an agent that detached it and committed left the branch behind.
-        at = checked("rev-parse", "HEAD", cwd=tree).strip()
-        unmerged = int(checked("rev-list", "--count", "^HEAD", tree.name, at, cwd=repo))
-        changed, new = changes(tree), made(tree, repo)
-        if changed or new or unmerged:
-            shown = ", ".join(new[:5]) + (f" and {len(new) - 5} more" if len(new) > 5 else "")
-            raise Problem(f"{tree} has {len(changed)} uncommitted files, {len(new)} ignored files the job made"
-                          f"{' (' + shown + ')' if new else ''} and {unmerged} commits not in"
-                          f" {repo.name}'s HEAD: merge what is worth keeping, or clean with --force")
-    for step in (("worktree", "remove", "--force", str(tree)), ("branch", "-D", "-q", tree.name)):
-        done = git(*step, cwd=repo)
-        if done.returncode:
-            raise Problem(done.stderr.strip())
-    print(f"removed {tree} and its branch")
-
-
-def home_of(repo, homes=None):
-    """Where REPO's worktrees/ and runs/ go: what HOMES (homes.toml) names for it, else JOBS/REPO."""
-    import tomllib
-    path = homes or HOMES
-    named = {}
-    if path.exists():
-        with path.open("rb") as handle:
-            named = tomllib.load(handle).get("homes", {})
-    for key, value in named.items():
-        if pathlib.Path(key).resolve() == repo:
-            return (repo / value).resolve()
-    return JOBS / repo.name
-
-
-def jobs(repo, home):
-    """One row a worktree of REPO under HOME: job, runs, age, answer, changes, id."""
-    rows = []
-    folder = home / "worktrees"
-    for tree in sorted(folder.iterdir()) if folder.exists() else ():
-        harness, _, name = tree.name.partition("-")
-        if harness not in HARNESSES or not tree.is_dir() or common(tree) != common(repo):
-            continue
-        runs = home / "runs" / harness
-        n = numbered(runs, name) - 1
-        last = runs / f"{name}-{n}.jsonl"
-        answer = runs / f"{name}-{n}.md"
-        said = "yes" if answer.exists() and answer.stat().st_size else "no"
-        changed = changes(tree)
-        age = usage.span(time.time() - (last if last.exists() else tree).stat().st_mtime)
-        rows.append([tree.name, n, age, said, len(changed), latest_id(harness, runs, name, n) or "-"])
-    return rows
-
-
-def latest_id(harness, runs, name, n):
-    """The id of the latest of runs 1 to N that got far enough to say one: a follow-up stopped before its first event
-    leaves the session the earlier runs named."""
-    for earlier in range(n, 0, -1):
-        path = runs / f"{name}-{earlier}.jsonl"
-        found = path.exists() and session(harness, path.read_text(encoding="utf-8", errors="replace"))
-        if found:
-            return found
-    return ""
-
-
-def listing(repo, home):
-    rows = jobs(repo, home)
-    if not rows:
-        print(f"no open jobs for {repo} in {home / 'worktrees'}")
-        return
-    print("\n".join(usage.table(["job", "runs", "last run", "answer", "changed files", "id"], rows,
-                                text=(0, 3, 5), notes={
-                                    "last run": "how long ago its latest output was written",
-                                    "changed files": "uncommitted, TASK.md left out",
-                                    "id": "what a follow-up passes; - if no run got far enough to say"})))
-
-
 def parse(argv):
     parser = argparse.ArgumentParser(prog="lmg ask", description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit PROMPT [ID], review SHA, clean ..., list")
-    parser.add_argument("--repo", help="the repository; the one the current folder is in unless given")
-    parser.add_argument("--home", help="where worktrees/ and runs/ go; homes.toml's or the tool's jobs/REPO unless given")
+    parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit FOLDER [ID], or review SHA FOLDER")
     parser.add_argument("--model", help="the harness's model instead of its default")
     parser.add_argument("--timeout", default="3600s", help="agy's print timeout (default 3600s)")
-    parser.add_argument("--force", action="store_true", help="clean a worktree even though it holds unmerged work")
+    parser.add_argument("--force", action="store_true", help="run an edit job in a repository's main checkout")
     return parser.parse_args(argv)
 
 
@@ -692,30 +519,18 @@ def main(argv, command_line=False):
     if command_line:
         bound()
     try:
-        repo = toplevel(pathlib.Path(args.repo or os.getcwd()).resolve())
-        home = pathlib.Path(args.home).resolve() if args.home else home_of(repo)
         what = words[0]
         if what in HARNESSES:
             if len(words) not in (3, 4) or words[1] not in ("read", "edit"):
-                raise Problem(f"lmg ask {what} read|edit PROMPT [ID]")
-            status, note, cleanup = job(what, words[1], words[2], words[3] if len(words) == 4 else None, repo, home,
-                                        args.model or DEFAULTS[what], args.timeout)
+                raise Problem(f"lmg ask {what} read|edit FOLDER [ID]")
+            status, note = job(what, words[1], words[2], words[3] if len(words) == 4 else None,
+                               args.model or DEFAULTS[what], args.timeout, args.force)
         elif what == "review":
-            if len(words) != 2:
-                raise Problem("lmg ask review SHA")
-            status, note, cleanup = review(words[1], repo, home, args.model or DEFAULTS["codex"])
-        elif what == "clean":
-            if len(words) != 3 or words[1] not in HARNESSES:
-                raise Problem("lmg ask clean agy|claude|codex NAME")
-            clean(words[1], words[2], repo, home, args.force)
-            return 0
-        elif what == "list":
-            if len(words) != 1:
-                raise Problem("lmg ask list")
-            listing(repo, home)
-            return 0
+            if len(words) != 3:
+                raise Problem("lmg ask review SHA FOLDER")
+            status, note = review(words[1], words[2], args.model or DEFAULTS["codex"])
         else:
-            raise Problem(f"unknown {what}: agy, claude, codex, review, clean or list")
+            raise Problem(f"unknown {what}: agy, claude, codex or review")
     except Problem as problem:
         print(problem, file=sys.stderr)
         return 2
@@ -726,10 +541,4 @@ def main(argv, command_line=False):
     except (Exception, SystemExit) as problem:
         # The job has run; a reading that fails loses the accounting, not the answer.
         print(f"the after reading failed, so this job is not in the ledger's costs: {problem}", file=sys.stderr)
-    if cleanup:
-        harness, name = cleanup
-        print(f"\nREMINDER: when the answer is reviewed and anything worth keeping is merged, remove the worktree:\n"
-              f"  lmg ask clean {harness} {name}\n"
-              f"A follow-up in the same worktree goes first: a new prompt file named {name}-prompt.md plus the id above.")
     return status
-
