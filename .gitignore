@@ -21,6 +21,5 @@ logs/
 # Your own readings, records and settings, written beside the scripts: not the tool's to share.
 /src/llm_gateway/usage-ledger.csv
 /src/llm_gateway/token-ledger.csv
-/src/llm_gateway/homes.toml
 
 .pytest_cache/
