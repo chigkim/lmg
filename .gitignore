@@ -24,6 +24,3 @@ logs/
 /src/llm_gateway/homes.toml
 
 .pytest_cache/
-
-# lmg ask's worktrees and runs from before it took a folder of your own
-/jobs/
