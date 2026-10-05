@@ -432,6 +432,37 @@ def test_a_tool_result_whose_image_fails_leaves_the_session_paused_for_a_retry(m
     assert gateway.ClaudeSession.paused == {"call_1": session} and not future.done()
 
 
+def test_a_parallel_call_whose_handler_starts_after_the_results_still_gets_its_own(monkeypatch):
+    monkeypatch.setattr(gateway.ClaudeSession, "paused", {})
+    monkeypatch.setattr(gateway, "sent_request", lambda *args: None)
+
+    async def handled():
+        session = gateway.ClaudeSession.__new__(gateway.ClaudeSession)
+        session.ready, session.closed, session.events = asyncio.Event(), False, asyncio.Queue()
+        session.ready.set()
+        session.futures, session.waiting, session.blocks, session.custom = {}, {}, {}, set()
+        session.sent_system, session.sent_tools, session.stop = "", [], None
+        for index, call_id in enumerate(("call_a", "call_b")):
+            for event in ({"type": "content_block_start", "index": index,
+                           "content_block": {"type": "tool_use", "id": call_id, "name": gateway.PREFIX + "bash"}},
+                          {"type": "content_block_stop", "index": index}):
+                session._take(gateway.StreamEvent(uuid="event", session_id="session", event=event))
+        session.events.put_nowait(("pause",))
+        handler = session._tool("bash", "", {}).handler
+        # Claude Code runs a reply's calls one at a time: the first handler waits, the second has not started.
+        first = asyncio.create_task(handler({}))
+        await asyncio.sleep(0)
+        results = {call_id: [{"type": "text", "text": call_id}] for call_id in ("call_a", "call_b")}
+        async for _ in session.turn(gateway.Emitter("anthropic/opus"), results=results):
+            pass
+        return await first, await handler({})
+
+    # The second handler used to look its call up in session.futures after turn() had emptied it: KeyError('call_b').
+    first, second = asyncio.run(handled())
+    assert first == {"content": [{"type": "text", "text": "call_a"}]}
+    assert second == {"content": [{"type": "text", "text": "call_b"}]}
+
+
 def test_two_conversations_alike_but_for_an_image_are_two_conversations():
     def with_image(url):
         return [("user", [{"type": "text", "text": "what is this?"}, {"type": "image", "url": url}])]

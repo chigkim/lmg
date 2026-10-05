@@ -610,8 +610,10 @@ class ClaudeSession:
 
     def _tool(self, name, description, schema):
         async def handler(args):
-            call_id = await self.waiting.setdefault(name, asyncio.Queue()).get()
-            return {"content": mcp_content(await self.futures[call_id])}
+            # The future itself, not its call id: Claude Code runs a reply's calls one after another, and the results
+            # can all be handed back, and dropped from self.futures, before a later call's handler starts.
+            future = await self.waiting.setdefault(name, asyncio.Queue()).get()
+            return {"content": mcp_content(await future)}
         return SdkMcpTool(name=name, description=description, input_schema=schema, handler=handler)
 
     async def _run(self, options):
@@ -655,8 +657,8 @@ class ClaudeSession:
         elif kind == "content_block_stop" and ev["index"] in self.blocks:
             block = self.blocks.pop(ev["index"])
             name = block["name"].removeprefix(PREFIX)
-            self.futures[block["id"]] = asyncio.get_running_loop().create_future()
-            self.waiting.setdefault(name, asyncio.Queue()).put_nowait(block["id"])
+            future = self.futures[block["id"]] = asyncio.get_running_loop().create_future()
+            self.waiting.setdefault(name, asyncio.Queue()).put_nowait(future)
             ClaudeSession.paused[block["id"]] = self
             args = block["args"] or "{}"
             if name in self.custom:
