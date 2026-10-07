@@ -62,6 +62,9 @@ CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models"
 LISTED_FOR = 5 * 60          # seconds a provider's list of models is kept before it is asked again
 IMAGE_BYTES = 20 * 1024 * 1024  # the most an image URL may download
 REDIRECTS = 5                   # how many an image URL may take before it is refused
+# The most one JSON line from `claude` may hold. The SDK's 1 MB default ends the session on a tool result carrying a
+# screenshot; base64 makes an image a third larger, and Claude Code echoes it back in the transcript.
+BUFFER_BYTES = 64 * 1024 * 1024
 # Fields the Codex backend accepts; it refuses others (temperature, max_output_tokens, ...).
 CODEX_FIELDS = {"model", "instructions", "input", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "text",
                 "include", "prompt_cache_key"}
@@ -603,6 +606,7 @@ class ClaudeSession:
             model=model, system_prompt=system_prompt, extra_args=extra_args, tools=[],
             mcp_servers={SERVER: server}, strict_mcp_config=True, allowed_tools=[PREFIX + n for n, *_ in tools],
             setting_sources=[], skills=[], include_partial_messages=True, cwd=WORKDIR, effort=effort, cli_path=CLAUDE,
+            max_buffer_size=BUFFER_BYTES,
             env={"MCP_TOOL_TIMEOUT": str(24 * 3600 * 1000), "MAX_MCP_OUTPUT_TOKENS": "200000",
                  "ENABLE_TOOL_SEARCH": "false"})
         self.ready = asyncio.Event()
