@@ -1,4 +1,4 @@
-"""Gateway keys use the script-relative repository, never the caller's working directory."""
+"""Gateway keys use ~/.lmg/.env, never the caller's working directory."""
 from pathlib import Path
 
 import pytest
@@ -7,8 +7,8 @@ from dotenv import dotenv_values
 from llm_gateway import gateway
 
 
-def test_dotenv_path_is_relative_to_gateway_script():
-    assert gateway.DOTENV == Path(gateway.__file__).resolve().parents[2] / ".env"
+def test_dotenv_path_is_in_lmg_home():
+    assert gateway.DOTENV == Path.home() / ".lmg" / ".env"
 
 
 @pytest.fixture

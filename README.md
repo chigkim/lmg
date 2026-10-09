@@ -26,7 +26,7 @@ lmg:
     status:                          # exit 0 when running, 3 when not
     options:
       --port N:                      # default 8797
-      --config PATH:                 # default config.toml
+      --config PATH:                 # default ~/.lmg/config.toml
   ask:                               # a job in a folder of your own
     agy|claude|codex:
       read|edit:
@@ -50,13 +50,13 @@ lmg:
 
 ## Install
 
-Python 3.14. Install it editable, because the ledgers are written beside the scripts and a normal install would put them inside uv's tool folder, where the next reinstall deletes them:
+Python 3.14. Install it editable, so edits to the checkout take effect at once:
 
 ```bash
 uv tool install -e .
 ```
 
-`lmg` then runs from any folder. Edits to the checkout take effect at once; a change to `pyproject.toml` needs `uv tool install -e --reinstall .`.
+`lmg` then runs from any folder. A change to `pyproject.toml` needs `uv tool install -e --reinstall .`.
 
 A plan whose client is not on `PATH` (`claude`, `codex`, `agy`) is reported as one that could not be asked, and the others are still read. `lmg ask` needs the harness it runs on `PATH`, and `git`.
 
@@ -66,14 +66,16 @@ A plan whose client is not on `PATH` (`claude`, `codex`, `agy`) is reported as o
 uv sync
 uv run lmg proxy start      # in the background, on http://127.0.0.1:8797/v1
 uv run lmg proxy status
-uv run lmg proxy restart    # after changing config.toml
+uv run lmg proxy restart    # after changing ~/.lmg/config.toml
 uv run lmg proxy stop
 uv run lmg proxy run        # or in this console, until Ctrl-C
 ```
 
-Every command takes `--port N` (default 8797) and `--config PATH` (default `config.toml`). Installed as a tool, `lmg proxy` runs without `uv run`; it reads `config.toml` from the folder you run `start` in, but always reads or creates `.env` in the repository beside `pyproject.toml`, located relative to the gateway script.
+Every command takes `--port N` (default 8797) and `--config PATH` (default `~/.lmg/config.toml`). Installed as a tool, `lmg proxy` runs without `uv run`.
 
-The daemon is known by its port. Its pid and console output are in `logs/PORT.pid` and `logs/PORT.log` in this project, found from the script's own location, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
+What lmg keeps for you is in `~/.lmg`, whatever folder you run it from: `.env` (the key), `config.toml` (copy the example in this repository there), `logs/` (conversation logs, relative to `config.toml`), `daemon/` (pid, lock and console log per port), `usage-ledger.csv` and `token-ledger.csv`, plus `memory/` and `prompts-PORT/` for the Claude sessions.
+
+The daemon is known by its port. Its pid and console output are in `~/.lmg/daemon/PORT.pid` and `PORT.log`, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
 
 Point any OpenAI-compatible client at `http://127.0.0.1:8797/v1`, with `GATEWAY_API_KEY` as its API key. It serves `/v1/responses`, `/v1/chat/completions` and `/v1/models`.
 
@@ -93,7 +95,7 @@ Then `codex exec -c model_provider=lmg -m anthropic/claude-haiku-4-5 "..."` runs
 
 ### API key
 
-Every request needs `Authorization: Bearer KEY`, which is what an OpenAI client sends for its API key. The gateway reads `GATEWAY_API_KEY` from the environment first, then from the repository's `.env` beside `pyproject.toml`, located relative to the gateway script rather than the execution directory. With neither, the first run generates a random key, writes it to that repository `.env` (appending if that file exists without one) and says so, without printing the key. Give a client the value from that file. `.env` is gitignored. The key is compared in constant time and never logged.
+Every request needs `Authorization: Bearer KEY`, which is what an OpenAI client sends for its API key. The gateway reads `GATEWAY_API_KEY` from the environment first, then from `~/.lmg/.env`, never the folder it runs in. With neither, the first run generates a random key, writes it to `~/.lmg/.env` (appending if that file exists without one) and says so, without printing the key. Give a client the value from that file. The key is compared in constant time and never logged.
 
 The key is what stops other processes on this machine, or a web page in your browser, from spending your plans: a browser cannot send an `Authorization` header to another site without a CORS preflight, which the gateway never answers.
 
@@ -120,7 +122,8 @@ Both APIs accept images, as data URLs or remote URLs. The Claude side fetches a 
 
 - The Codex token is read from `auth.json` on every request and never refreshed, written, logged or printed. When it expires, run any `codex` command and retry.
 - Claude's login is never touched: the SDK's `claude` child uses its own. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` are dropped from the environment at startup, so the Claude side is the subscription or nothing.
-- The client's system prompt reaches `claude` as a file, `system-ID.md` in `llm-gateway/prompts-PORT` under the temp folder: one a session, so two at once never share one, deleted when the session ends, and swept when the gateway on that port next starts, since `stop` kills it before it can clean up. On the command line, a prompt over 32,767 characters, such as OpenCode's, could not start the child on Windows. Recognized Pi prompts use that file as an append to Claude Code's preset rather than as a full replacement; other prompts keep the original file mode.
+- `claude` runs in `~/.lmg` and keeps its auto memory in `~/.lmg/memory`, set with `--settings {"autoMemoryDirectory": ...}`, so every proxy session shares one memory whatever project the client is in.
+- The client's system prompt reaches `claude` as a file, `system-ID.md` in `~/.lmg/prompts-PORT`, under the folder `claude` runs in: one a session, so two at once never share one, deleted when the session ends, and swept when the gateway on that port next starts, since `stop` kills it before it can clean up. On the command line, a prompt over 32,767 characters, such as OpenCode's, could not start the child on Windows. Recognized Pi prompts use that file as an append to Claude Code's preset rather than as a full replacement; other prompts keep the original file mode.
 - On Windows the SDK will not run npm's `claude.cmd` shim, so the gateway uses the `claude.exe` inside the npm package. `CLAUDE_CLI` overrides the path.
 
 ### Pi prompts
@@ -138,7 +141,7 @@ Unlike the Pi bridge, the gateway receives no structured prompt metadata, so thi
 
 ### Request log
 
-`config.toml` (read from the working directory, or `--config PATH`) sets it up:
+`~/.lmg/config.toml` (or `--config PATH`) sets it up:
 
 ```toml
 [log]
@@ -201,7 +204,7 @@ lmg ask codex edit ../wt-fix/jobs/fix-ledger
 2. It takes a reading as `before: HARNESS NAME [pid N]`, NAME being the folder's name, with `(resumed)` after it on a follow-up, before anything is written, so a reading that cannot be written leaves no run half made. The pid pairs it with this job's own `after:` reading.
 3. Run N claims its number by making `responseN.jsonl` (two runs started at once each get a number of their own), copies `task.md` to `taskN.md`, and runs the harness told to read `taskN.md` by its full path and that its final message is saved as `responseN.md`. `task.md` is left in place, so you can edit it for the next run while this one goes. Stopped with Ctrl-C, the harness is killed and the job reads what it streamed as a run stopped part way.
 4. The harness's final message is the answer, `responseN.md`, written by `lmg ask` rather than the agent, which in read mode cannot write. Its raw output is `responseN.jsonl`, and Codex's log `responseN.log`. The raw output is streamed as the job runs, so a run stopped part way still has the session id, which is printed with the follow-up command.
-5. It takes the `after:` reading, and one row goes to `src/llm_gateway/token-ledger.csv`: time, job, repository, model, uncached input, cache reads, cache writes, output, and the public-API cost.
+5. It takes the `after:` reading, and one row goes to `~/.lmg/token-ledger.csv`: time, job, repository, model, uncached input, cache reads, cache writes, output, and the public-API cost.
 
 A folder after a job and one follow-up:
 
@@ -267,11 +270,11 @@ lmg usage "before: pi design review"
 lmg usage "after: pi design review"
 ```
 
-A note is a word, a colon and what it is about; `before:` and `after:` are the two a task is paired from. Both rows go to `src/llm_gateway/usage-ledger.csv`. A task's cost is only what its windows lost between its own two readings, so other spending before or after it does not count. A window that went up was reset during the task, so it is left out rather than counted as a gain.
+A note is a word, a colon and what it is about; `before:` and `after:` are the two a task is paired from. Both rows go to `~/.lmg/usage-ledger.csv`. A task's cost is only what its windows lost between its own two readings, so other spending before or after it does not count. A window that went up was reset during the task, so it is left out rather than counted as a gain.
 
 Tasks are grouped by the harness that ran them, the first word of their name. An `lmg ask` job is `agy`, `claude` or `codex`, and a review is `codex review SHA`, so it counts as Codex. Each spends the plan of its own name. A task of your own may be named anything, such as `pi x`: it has no cost column of its own, but `lmg usage tasks` lists it. It is taken to spend every plan whose window fell while it ran, and a harness task it overlaps on one of those plans is left out of that harness's cost, since the two cannot be told apart. In the task list an `agy`, `claude` or `codex` task shows only its own plan's windows, since a fall on another plan is somebody else's spending.
 
-The two ledgers are gitignored: they are your records, not the tool's.
+The two ledgers are in `~/.lmg`, outside the checkout: they are your records, not the tool's.
 
 ## What `lmg usage worth` measures
 

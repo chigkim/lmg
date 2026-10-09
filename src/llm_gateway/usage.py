@@ -9,9 +9,8 @@ from the endpoint its own `/usage` reads, with the CLI's login token held in
 memory for the one request and never printed or stored; a tiny Haiku call is
 the fallback when that token has expired. The three run at once.
 
-The ledger is `usage-ledger.csv` beside this file, so the tool is installed
-editable (`uv tool install -e`) and the ledger stays in the checkout. It is
-shared by every project that spends the same plans, since a plan's limit
+The ledger is `~/.lmg/usage-ledger.csv`, kept out of the checkout and uv's
+tool folder so no reinstall or clone loses it. It is shared by every project that spends the same plans, since a plan's limit
 counts all of them.
 """
 
@@ -32,6 +31,8 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+
+from .home import HOME
 
 PROMPT = "Reply with the word ok and nothing else."
 
@@ -343,8 +344,7 @@ def agy():
     return out or ["  no quota in the agy log"]
 
 
-DATA = pathlib.Path(__file__).parent
-LEDGER = DATA / "usage-ledger.csv"
+LEDGER = HOME / "usage-ledger.csv"
 # A ledger row's time. To the second, so a reading just before a task and one just after it never share a time.
 STAMP = "%Y-%m-%d %H:%M:%S"
 # Each window's percent left and its reset, `YYYY-MM-DD HH:MM`; a blank is
@@ -417,6 +417,7 @@ def append(path, fields, row):
     Without the lock two processes could each find the file empty and write a header, and on Windows, where an
     append seeks to the end and then writes, one could write its row over the other's (measured)."""
     # Touch without truncating, then read and extend an older schema under the same lock as the append.
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
     with path.open("r+b") as book, locked(book):
         book.seek(0)

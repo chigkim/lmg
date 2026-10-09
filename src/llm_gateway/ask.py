@@ -27,8 +27,8 @@ the same FOLDER, task.md edited, plus that id, and may change mode. A review num
 A reading of each plan's windows goes to `usage-ledger.csv` as `before: HARNESS NAME [pid N]` and `after: ...`, NAME
 being FOLDER's name, so the harness is what `lmg usage` costs it under; a review's note is `codex review SHA`. One row
 a job goes to `token-ledger.csv`: the repository, the uncached input, cache reads, cache writes and output, which add
-up to what the model read and wrote, and what they would cost on the public API at the rates in `prices.csv`. All
-three sit beside this file.
+up to what the model read and wrote, and what they would cost on the public API at the rates in `prices.csv`. The
+two ledgers are in ~/.lmg; `prices.csv` sits beside this file.
 """
 import argparse
 import json
@@ -41,10 +41,11 @@ import time
 from datetime import datetime
 
 from . import calls, usage
+from .home import HOME
 
 HARNESSES = ("agy", "claude", "codex")
 DEFAULTS = {"agy": "gemini-3.8-flash-medium", "claude": "claude-opus-5-5", "codex": "gpt-6.1-sol"}
-TOKENS = pathlib.Path(__file__).parent / "token-ledger.csv"
+TOKENS = HOME / "token-ledger.csv"
 TOKEN_FIELDS = ["time", "note", "repo", "model", "input", "cache_read", "cache_write", "cache_write_1h", "output", "usd"]
 
 # Codex reads by running commands, which its sandbox allows, so it is told only not to write; the other two read with

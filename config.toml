@@ -1,4 +1,4 @@
-# llm-gateway settings. Read from the working directory, or wherever --config points.
+# llm-gateway settings. Read from ~/.lmg/config.toml, or wherever --config points; this copy in the repository is the example.
 
 [log]
 # One file per conversation; {session} becomes yy-mm-dd hh-mm-ss session-id.

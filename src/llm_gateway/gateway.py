@@ -17,7 +17,7 @@ a tool call ends the HTTP response with a function_call, the handler waits, and 
 function_call_output for that call id hands the output to it and lets Claude carry on. A conversation the gateway has
 no live session for (a restart, a client that edited its history) is replayed to a fresh session as a transcript.
 
-Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment or from the repository's .env beside pyproject.toml, located relative to this script. With neither, it writes a new random key there and uses that: a keyless gateway would let any process on the machine, or a web page in its browser, spend both plans.
+Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment or from ~/.lmg/.env, never the caller's working directory. With neither, it writes a new random key there and uses that: a keyless gateway would let any process on the machine, or a web page in its browser, spend both plans.
 
 Credentials: the Codex token is read from auth.json on every request and never refreshed, written, logged or printed.
 Codex rotates its refresh token, so a second refresher could log Codex out; when the token expires, run any `codex`
@@ -38,7 +38,6 @@ import secrets
 import shutil
 import socket
 import sys
-import tempfile
 import time
 import tomllib
 import traceback
@@ -51,9 +50,10 @@ from dotenv import dotenv_values
 from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, SdkMcpTool, StreamEvent,
                               create_sdk_mcp_server)
 
+from .home import HOME
 from .pi_prompt import adapt_pi_prompt
 
-DOTENV = pathlib.Path(__file__).resolve().parents[2] / ".env"  # src/llm_gateway/gateway.py -> the project
+DOTENV = HOME / ".env"
 SERVER = "c"                 # the SDK names a tool mcp__SERVER__NAME
 PREFIX = f"mcp__{SERVER}__"
 IDLE = 30 * 60               # seconds a Claude session is kept with nobody using it
@@ -602,6 +602,7 @@ class ClaudeSession:
                          else {"type": "file", "path": str(self.prompt)})
         # Keep both custom prompts and Pi's preset append off Windows' command line. Session matching still uses the original client prompt above.
         extra_args = {"append-system-prompt-file": str(self.prompt)} if pi_append is not None else {}
+        extra_args["settings"] = json.dumps({"autoMemoryDirectory": MEMORY})
         options = ClaudeAgentOptions(
             model=model, system_prompt=system_prompt, extra_args=extra_args, tools=[],
             mcp_servers={SERVER: server}, strict_mcp_config=True, allowed_tools=[PREFIX + n for n, *_ in tools],
@@ -1074,11 +1075,12 @@ def refusal(status, message):
 
 
 def api_key():
-    """Read the environment or script-relative repository .env; generate a key there if neither supplies one."""
+    """Read the environment or DOTENV; generate a key there if neither supplies one."""
     key = os.environ.get("GATEWAY_API_KEY") or dotenv_values(DOTENV).get("GATEWAY_API_KEY")
     if key and key.strip():
         return key.strip()
     key, path = secrets.token_urlsafe(32), DOTENV
+    path.parent.mkdir(parents=True, exist_ok=True)
     lead = "\n" if path.exists() and not path.read_bytes().endswith(b"\n") and path.stat().st_size else ""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:
@@ -1289,7 +1291,8 @@ def claude_exe():
 
 
 SESSIONS, HTTP, IMAGES, CLAUDE = set(), None, None, claude_exe()
-WORKDIR = str(pathlib.Path(tempfile.gettempdir()) / "llm-gateway")
+WORKDIR = str(HOME)
+MEMORY = str(pathlib.Path(WORKDIR) / "memory")  # Claude Code's auto memory, one folder for every proxy session
 PROMPTS = pathlib.Path(WORKDIR) / "prompts"  # one folder a port once serving, so no gateway sweeps another's
 
 

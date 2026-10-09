@@ -7,9 +7,8 @@
     lmg proxy status       whether it is running, its pid and its log
     lmg proxy models       the models each harness lists, as /v1/models would; the gateway need not be running
 
-A daemon is known by its port: its pid and console output are in logs/PORT.pid and logs/PORT.log in this project,
-found from this file rather than the working directory, so `stop` and `status` work from any folder. It runs in the
-folder `start` was run from, and reads config.toml and .env there.
+A daemon is known by its port: its pid and console output are in ~/.lmg/daemon/PORT.pid and PORT.log, so `stop` and
+`status` work from any folder. It reads ~/.lmg/config.toml unless --config points elsewhere, and ~/.lmg/.env.
 """
 import argparse
 import asyncio
@@ -22,9 +21,10 @@ import subprocess
 import sys
 import time
 
+from .home import HOME
 from .usage import locked
 
-STATE = pathlib.Path(__file__).resolve().parents[2] / "logs"   # src/llm_gateway/daemon.py -> the project
+STATE = HOME / "daemon"
 READY = 30                   # seconds `start` waits for the port to answer
 WINDOWS = sys.platform == "win32"
 
@@ -236,7 +236,7 @@ def main(argv):
     parser = argparse.ArgumentParser(prog="lmg proxy", description=__doc__.split("\n")[0])
     parser.add_argument("command", nargs="?", default="run", choices=("run", "start", "stop", "restart", "status", "models"))
     parser.add_argument("--port", type=int, default=8797)
-    parser.add_argument("--config", default="config.toml", help="settings file (default: config.toml)")
+    parser.add_argument("--config", default=str(HOME / "config.toml"), help="settings file (default: ~/.lmg/config.toml)")
     args = parser.parse_args(argv)
     if args.command == "run":
         from .gateway import serve

@@ -5,19 +5,20 @@
 
     uv run tools/smoke.py MODEL [IMAGE]
 
-The key is GATEWAY_API_KEY, from the environment or .env, as the gateway reads it.
+The key is GATEWAY_API_KEY, from the environment or ~/.lmg/.env, as the gateway reads it.
 """
 import base64
 import json
 import os
+import pathlib
 import sys
 
-from dotenv import dotenv_values, find_dotenv
+from dotenv import dotenv_values
 from openai import OpenAI
 
 MODEL = sys.argv[1]
 IMAGE = sys.argv[2] if len(sys.argv) > 2 else None
-KEY = os.environ.get("GATEWAY_API_KEY") or dotenv_values(find_dotenv(usecwd=True)).get("GATEWAY_API_KEY")
+KEY = os.environ.get("GATEWAY_API_KEY") or dotenv_values(pathlib.Path.home() / ".lmg" / ".env").get("GATEWAY_API_KEY")
 api = OpenAI(base_url="http://127.0.0.1:8797/v1", api_key=KEY)
 WEATHER = {"name": "get_weather", "description": "The weather in a city, right now.",
            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}

@@ -1,10 +1,13 @@
 """Pi prompt adaptation uses fake SDK clients only: no Claude process or paid request."""
 import asyncio
+import json
 
 import pytest
 
 from llm_gateway import gateway
 from llm_gateway.pi_prompt import PI_PREAMBLE, adapt_pi_prompt
+
+MEMORY_SETTINGS = json.dumps({"autoMemoryDirectory": gateway.MEMORY})
 
 
 def pi_prompt(tail=""):
@@ -117,7 +120,7 @@ def test_pi_uses_the_preset_and_an_append_file_without_enabling_native_tools(mon
     seen, sessions = sdk_options(monkeypatch, tmp_path, [system])
     options, append, path = seen[0]
     assert options.system_prompt == {"type": "preset", "preset": "claude_code"}
-    assert options.extra_args == {"append-system-prompt-file": path}
+    assert options.extra_args == {"append-system-prompt-file": path, "settings": MEMORY_SETTINGS}
     assert append == adapt_pi_prompt(system)
     assert options.tools == [] and options.setting_sources == [] and options.skills == []
     assert sessions[0].key == gateway.fingerprint("sonnet", system, [])
@@ -128,7 +131,7 @@ def test_other_prompts_still_use_the_original_file_mode(monkeypatch, tmp_path, s
     seen, _ = sdk_options(monkeypatch, tmp_path, [system])
     options, sent, path = seen[0]
     assert options.system_prompt == {"type": "file", "path": path}
-    assert options.extra_args == {}
+    assert options.extra_args == {"settings": MEMORY_SETTINGS}
     assert sent == system
 
 
