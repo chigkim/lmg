@@ -164,6 +164,13 @@ def test_a_compacted_conversation_closes_its_earlier_session(fake):
     assert old.closed and old not in gateway.SESSIONS and not new.closed
 
 
+def test_a_compaction_that_rewrites_the_system_still_closes_the_earlier_session(fake):
+    asyncio.run(drained(of_client({**said_to("hello"), "instructions": "system with MCP servers"})))
+    asyncio.run(drained(of_client({**said_to("Summary", "ok", "continue"), "instructions": "shorter system"})))
+    old, new = fake.made
+    assert old.closed and old not in gateway.SESSIONS and not new.closed
+
+
 def test_a_side_request_leaves_the_conversation_alone_and_is_closed_after(fake):
     asyncio.run(drained(of_client(said_to("hello"))))
     asyncio.run(drained(of_client(said_to("Summarize: hello ok"), tools=False)))

@@ -751,14 +751,15 @@ def client_of(body):
 
 def replace_client_session(client, session, tooled):
     """Close the client's earlier sessions that a fresh one replaces, which nothing can match any more: without this
-    a compacted conversation would leave its old `claude` child running until IDLE. Replaced are those with the same
-    model, system and tools, and one-off helpers with no tools (a compaction's summary); a side request never closes
-    the conversation it was made beside, and one mid-reply for another request is left alone."""
+    a compacted conversation would leave its old `claude` child running until IDLE. A session with tools is the
+    conversation, and replaces all the client's others, whatever their system (pi rewrites its system at compaction);
+    one without is a helper (a compaction's summary), and replaces only other helpers, so a side request never closes
+    the conversation it was made beside. One mid-reply for another request is left alone."""
     kept = CLIENTS.setdefault(client, {})
     for old, old_tooled in list(kept.items()):
         if old.closed or old not in SESSIONS:
             del kept[old]
-        elif (old.key == session.key or not old_tooled) and not old.lock.locked():
+        elif (tooled or not old_tooled) and not old.lock.locked():
             log("  closed the client's earlier session")
             old.close()
             SESSIONS.discard(old)
