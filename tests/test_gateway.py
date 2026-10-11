@@ -57,6 +57,7 @@ def fake(monkeypatch):
     monkeypatch.setattr(gateway.ClaudeSession, "paused", {})
     monkeypatch.setattr(gateway.ClaudeSession, "idle", {})
     monkeypatch.setattr(gateway, "SESSIONS", set())
+    monkeypatch.setattr(gateway, "CLIENTS", {})
     monkeypatch.setattr(gateway, "log", lambda *parts: None)
     FakeSession.made = []
     return FakeSession
@@ -146,6 +147,48 @@ def test_editing_an_earlier_assistant_reply_starts_a_fresh_idle_session(fake):
     asyncio.run(drained(body))
     assert len(fake.made) == 2 and fake.made[0].closed
     assert fake.made[1].handed == [gateway.transcript(gateway.entries(body)[1])]
+
+
+def of_client(body, client="pi-session", tools=True):
+    body = {**body, "prompt_cache_key": client}
+    if tools:
+        body["tools"] = [{"type": "function", "name": "read", "description": ""}]
+    return body
+
+
+def test_a_compacted_conversation_closes_its_earlier_session(fake):
+    asyncio.run(drained(of_client(said_to("hello"))))
+    asyncio.run(drained(of_client(said_to("hello", "ok", "next"))))
+    asyncio.run(drained(of_client(said_to("Summary of the conversation", "ok", "continue"))))
+    old, new = fake.made
+    assert old.closed and old not in gateway.SESSIONS and not new.closed
+
+
+def test_a_side_request_leaves_the_conversation_alone_and_is_closed_after(fake):
+    asyncio.run(drained(of_client(said_to("hello"))))
+    asyncio.run(drained(of_client(said_to("Summarize: hello ok"), tools=False)))
+    main, summary = fake.made
+    assert not main.closed and not summary.closed
+    asyncio.run(drained(of_client(said_to("Summary", "ok", "continue"))))
+    assert main.closed and summary.closed and not fake.made[2].closed
+
+
+def test_other_clients_and_unnamed_conversations_keep_their_sessions(fake):
+    asyncio.run(drained(of_client(said_to("hello"), client="one")))
+    asyncio.run(drained(of_client(said_to("goodbye"), client="two")))
+    asyncio.run(drained(said_to("hi")))
+    asyncio.run(drained(said_to("hey")))
+    assert len(fake.made) == 4 and not any(s.closed for s in fake.made)
+
+
+def test_the_client_may_name_its_conversation_in_a_header(fake):
+    async def named(body):
+        gateway.CLIENT_HEADER.set("pi-session")
+        return await drained(body)
+    tools = [{"type": "function", "name": "read", "description": ""}]
+    asyncio.run(named({**said_to("hello"), "tools": tools}))
+    asyncio.run(named({**said_to("Summary", "ok", "continue"), "tools": tools}))
+    assert fake.made[0].closed and not fake.made[1].closed
 
 
 def test_interleaved_tool_call_arguments_stay_with_their_call():

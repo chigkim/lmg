@@ -77,6 +77,9 @@ LEVELS = ("off", "error", "info", "debug", "trace")
 LOG, LEVEL, SOURCE = None, 0, "received"  # configured at startup
 SENT = contextvars.ContextVar("sent_request", default=None)
 LOG_CONTEXT = contextvars.ContextVar("conversation_log", default=None)
+CLIENT_HEADER = contextvars.ContextVar("client_header", default=None)  # the request's session header, if any
+# Headers a client may name its conversation by; Pi sends its session ID as x-client-request-id.
+CLIENT_HEADERS = ("X-Session-ID", "Session-ID", "session_id", "x-client-request-id")
 LOG_FILES, LOG_HISTORY = {}, {}  # bounded, process-local conversation lookup
 
 
@@ -102,6 +105,7 @@ def conversation_log(handler):
     """Keep concurrent HTTP requests' log destinations separate, including trace lines."""
     @functools.wraps(handler)
     async def wrapped(request):
+        CLIENT_HEADER.set(next((request.headers[h] for h in CLIENT_HEADERS if request.headers.get(h)), None))
         if not LOG or "{session}" not in LOG:
             return await handler(request)
         client_id = request.headers.get("X-Session-ID") or request.headers.get("Session-ID")
@@ -738,6 +742,30 @@ class ClaudeSession:
                 del table[k]
 
 
+def client_of(body):
+    """The client's name for its conversation, which outlives a compaction that leaves no session matching it."""
+    metadata = body.get("metadata")
+    named = body.get("prompt_cache_key") or (metadata.get("session_id") if isinstance(metadata, dict) else None)
+    return str(named or CLIENT_HEADER.get() or "") or None
+
+
+def replace_client_session(client, session, tooled):
+    """Close the client's earlier sessions that a fresh one replaces, which nothing can match any more: without this
+    a compacted conversation would leave its old `claude` child running until IDLE. Replaced are those with the same
+    model, system and tools, and one-off helpers with no tools (a compaction's summary); a side request never closes
+    the conversation it was made beside, and one mid-reply for another request is left alone."""
+    kept = CLIENTS.setdefault(client, {})
+    for old, old_tooled in list(kept.items()):
+        if old.closed or old not in SESSIONS:
+            del kept[old]
+        elif (old.key == session.key or not old_tooled) and not old.lock.locked():
+            log("  closed the client's earlier session")
+            old.close()
+            SESSIONS.discard(old)
+            del kept[old]
+    kept[session] = tooled
+
+
 def effort_of(model, body):
     effort = (body.get("reasoning") or {}).get("effort")
     if not effort or "haiku" in model:
@@ -795,6 +823,8 @@ async def claude(model, body):
             session = ClaudeSession(model, system, tools, effort_of(model, body))
             SESSIONS.add(session)
             route, run = f"fresh, {len(convo)} entries", {"send": transcript(convo)}
+            if client_of(body):
+                replace_client_session(client_of(body), session, bool(tools))
     if not hasattr(session, "log_id"):
         session.log_id = new_id("session")
     bind_log(session.log_id)
@@ -817,6 +847,11 @@ async def reap():
         for s in [s for s in SESSIONS if s.closed or time.monotonic() - s.used > IDLE]:
             SESSIONS.discard(s)
             s.close()
+        for client, kept in list(CLIENTS.items()):
+            for s in [s for s in kept if s not in SESSIONS]:
+                del kept[s]
+            if not kept:
+                del CLIENTS[client]
 
 
 # ---------------------------------------------------------------- the OpenAI side
@@ -885,7 +920,12 @@ async def codex_version():
     try:
         child = await asyncio.create_subprocess_exec(shutil.which("codex") or "codex", "--version",
                                                      stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(child.communicate(), 30)
+        try:
+            out, _ = await asyncio.wait_for(child.communicate(), 30)
+        except TimeoutError:
+            child.kill()  # or it outlives the request that gave up on it
+            await child.wait()
+            raise
     except (OSError, TimeoutError):
         raise Refused(502, "codex --version could not be run")
     found = re.search(rb"\d+\.\d+\.\d+\S*", out)
@@ -1291,6 +1331,7 @@ def claude_exe():
 
 
 SESSIONS, HTTP, IMAGES, CLAUDE = set(), None, None, claude_exe()
+CLIENTS = {}  # a client's conversation name -> {its live session: whether it has tools}
 WORKDIR = str(HOME)
 MEMORY = str(pathlib.Path(WORKDIR) / "memory")  # Claude Code's auto memory, one folder for every proxy session
 PROMPTS = pathlib.Path(WORKDIR) / "prompts"  # one folder a port once serving, so no gateway sweeps another's
