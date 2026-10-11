@@ -56,7 +56,7 @@ from .pi_prompt import adapt_pi_prompt
 DOTENV = HOME / ".env"
 SERVER = "c"                 # the SDK names a tool mcp__SERVER__NAME
 PREFIX = f"mcp__{SERVER}__"
-IDLE = 30 * 60               # seconds a Claude session is kept with nobody using it
+IDLE = 10 * 60               # seconds a Claude session is kept with nobody using it
 CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models"
 LISTED_FOR = 5 * 60          # seconds a provider's list of models is kept before it is asked again
