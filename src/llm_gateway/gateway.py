@@ -17,7 +17,7 @@ a tool call ends the HTTP response with a function_call, the handler waits, and 
 function_call_output for that call id hands the output to it and lets Claude carry on. A conversation the gateway has
 no live session for (a restart, a client that edited its history) is replayed to a fresh session as a transcript.
 
-Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment or from ~/.lmg/.env, never the caller's working directory. With neither, it writes a new random key there and uses that: a keyless gateway would let any process on the machine, or a web page in its browser, spend both plans.
+Clients authenticate with `Authorization: Bearer KEY`, KEY being GATEWAY_API_KEY from the environment, else [proxy] api_key in config.toml, else lmg-proxy. A keyless gateway would let a web page in the browser spend both plans; a key other than the default also keeps out other processes on the machine.
 
 Credentials: the Codex token is read from auth.json on every request and never refreshed, written, logged or printed.
 Codex rotates its refresh token, so a second refresher could log Codex out; when the token expires, run any `codex`
@@ -34,7 +34,6 @@ import json
 import os
 import pathlib
 import re
-import secrets
 import shutil
 import socket
 import sys
@@ -46,14 +45,14 @@ import uuid
 
 import aiohttp
 from aiohttp import web
-from dotenv import dotenv_values
 from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, SdkMcpTool, StreamEvent,
                               create_sdk_mcp_server)
 
 from .home import HOME
 from .pi_prompt import adapt_pi_prompt
 
-DOTENV = HOME / ".env"
+DEFAULT_CONFIG = pathlib.Path(__file__).with_name("config.toml")  # written to --config when it is missing
+DEFAULT_KEY = "lmg-proxy"   # the API key when neither the environment nor config.toml sets one
 SERVER = "c"                 # the SDK names a tool mcp__SERVER__NAME
 PREFIX = f"mcp__{SERVER}__"
 IDLE = 10 * 60               # seconds a Claude session is kept with nobody using it
@@ -282,12 +281,19 @@ def record(api, body, started, output=None, usage=None, error=None, sent=None):
     logged(line)
 
 
+def settings(path):
+    """Return config.toml's settings, writing the default one first if none is there."""
+    path = pathlib.Path(path)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(DEFAULT_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
 def configured(path):
     """Return the log file, level, and received/sent source from config.toml."""
     path = pathlib.Path(path)
-    if not path.exists():
-        return None, 0, "received"
-    section = tomllib.loads(path.read_text(encoding="utf-8")).get("log", {})
+    section = settings(path).get("log", {})
     level = section.get("level", "info")
     if level not in LEVELS:
         sys.exit(f"{path}: [log] level is {level!r}; use one of {', '.join(LEVELS)}")
@@ -1115,19 +1121,12 @@ def refusal(status, message):
     return web.json_response({"error": error}, status=status)
 
 
-def api_key():
-    """Read the environment or DOTENV; generate a key there if neither supplies one."""
-    key = os.environ.get("GATEWAY_API_KEY") or dotenv_values(DOTENV).get("GATEWAY_API_KEY")
-    if key and key.strip():
-        return key.strip()
-    key, path = secrets.token_urlsafe(32), DOTENV
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lead = "\n" if path.exists() and not path.read_bytes().endswith(b"\n") and path.stat().st_size else ""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:
-        f.write(f"{lead}GATEWAY_API_KEY={key}\n")
-    log(f"no GATEWAY_API_KEY: generated one in {path}")
-    return key
+def api_key(path):
+    """GATEWAY_API_KEY from the environment, else config.toml's [proxy] api_key, else DEFAULT_KEY."""
+    key = os.environ.get("GATEWAY_API_KEY") or settings(path).get("proxy", {}).get("api_key") or ""
+    if not isinstance(key, str):
+        sys.exit(f"{path}: [proxy] api_key must be a string")
+    return key.strip() or DEFAULT_KEY
 
 
 def keyed(key):
@@ -1343,7 +1342,7 @@ def serve(port, config):
     global LOG, LEVEL, SOURCE, PROMPTS
     LOG, LEVEL, SOURCE = configured(config)
     PROMPTS = pathlib.Path(WORKDIR) / f"prompts-{port}"
-    key = api_key()
+    key = api_key(config)
     os.makedirs(PROMPTS, exist_ok=True)
     for left in PROMPTS.glob("system-*.md"):  # left by this port's last gateway, which `stop` kills outright
         left.unlink(missing_ok=True)

@@ -73,7 +73,7 @@ uv run lmg proxy run        # or in this console, until Ctrl-C
 
 Every command takes `--port N` (default 8797) and `--config PATH` (default `~/.lmg/config.toml`). Installed as a tool, `lmg proxy` runs without `uv run`.
 
-What lmg keeps for you is in `~/.lmg`, whatever folder you run it from: `.env` (the key), `config.toml` (copy the example in this repository there), `logs/` (conversation logs, relative to `config.toml`), `daemon/` (pid, lock and console log per port), `usage-ledger.csv` and `token-ledger.csv`, plus `memory/` and `prompts-PORT/` for the Claude sessions.
+What lmg keeps for you is in `~/.lmg`, whatever folder you run it from: `config.toml` (the key and log settings, written with the defaults on the first `lmg proxy` run), `logs/` (conversation logs, relative to `config.toml`), `daemon/` (pid, lock and console log per port), `usage-ledger.csv` and `token-ledger.csv`, plus `memory/` and `prompts-PORT/` for the Claude sessions.
 
 The daemon is known by its port. Its pid and console output are in `~/.lmg/daemon/PORT.pid` and `PORT.log`, so `stop` and `status` work from any folder. `start` returns once the port accepts connections, or reports the exit and points at the log. `stop` kills the whole process tree, Claude children included. `status` exits 0 when running and 3 when not.
 
@@ -95,9 +95,14 @@ Then `codex exec -c model_provider=lmg -m anthropic/claude-haiku-4-5 "..."` runs
 
 ### API key
 
-Every request needs `Authorization: Bearer KEY`, which is what an OpenAI client sends for its API key. The gateway reads `GATEWAY_API_KEY` from the environment first, then from `~/.lmg/.env`, never the folder it runs in. With neither, the first run generates a random key, writes it to `~/.lmg/.env` (appending if that file exists without one) and says so, without printing the key. Give a client the value from that file. The key is compared in constant time and never logged.
+Every request needs `Authorization: Bearer KEY`, which is what an OpenAI client sends for its API key. The gateway reads `GATEWAY_API_KEY` from the environment first, then `api_key` under `[proxy]` in `~/.lmg/config.toml` (or `--config PATH`), never a file in the folder it runs in. With neither, the key is `lmg-proxy`, which the generated config also sets. The key is compared in constant time and never logged.
 
-The key is what stops other processes on this machine, or a web page in your browser, from spending your plans: a browser cannot send an `Authorization` header to another site without a CORS preflight, which the gateway never answers.
+```toml
+[proxy]
+api_key = "lmg-proxy"
+```
+
+The key stops a web page in your browser from spending your plans: a browser cannot send an `Authorization` header to another site without a CORS preflight, which the gateway never answers. That holds for the default key too. To also keep out other processes on this machine, set a key of your own.
 
 ### Models
 
@@ -134,14 +139,14 @@ Unlike the Pi bridge, the gateway receives no structured prompt metadata, so thi
 
 ### Limits
 
-- It binds to `127.0.0.1` only. Anything on this machine that can read `.env` can use it.
+- It binds to `127.0.0.1` only. Anything on this machine that knows the key, or can read `config.toml`, can use it.
 - Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. An unadapted full agent harness prompt, such as Pi's, can be refused with `Third-party apps now draw from extra usage` unless Extra Usage is on; the recognized Pi scaffold is adapted as described above. The check reads the prompt's content, not the fact that it is another agent's: Pi's prompt is refused for the routing list in its `<docs>` block (extensions, themes, skills, ..., `pi packages`, MCP servers), where no one item fails alone and dropping `custom providers` or `pi packages` from that line alone lets it pass, while its opening line naming Pi passes by itself; Hermes Agent's own 15,000-character prompt, which names Nous Research, passed on Haiku 4.5 and Opus 5.5 in September 2026, as did Codex's. OpenCode's main prompt is refused like Pi's, while its short session-title prompt passes.
 - A conversation with no live Claude session (after a restart, or a client that edited its history) is replayed to a fresh session as a transcript.
 - Claude's thinking is not passed back. The Codex backend drops fields it does not accept, such as `temperature`.
 
 ### Request log
 
-`~/.lmg/config.toml` (or `--config PATH`) sets it up:
+`~/.lmg/config.toml` (or `--config PATH`) sets it up. When the file is missing, the proxy writes it from `src/llm_gateway/config.toml`, which logs nothing (`level = "off"`). To log, edit it, for example:
 
 ```toml
 [log]

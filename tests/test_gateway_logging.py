@@ -96,6 +96,7 @@ def test_config_source(tmp_path, source):
 def test_config_defaults_and_invalid_source(tmp_path):
     path = tmp_path / "config.toml"
     assert gateway.configured(path) == (None, 0, "received")
+    assert path.read_text(encoding="utf-8") == gateway.DEFAULT_CONFIG.read_text(encoding="utf-8")
     path.write_text('[log]\nfile = "log.jsonl"\n')
     assert gateway.configured(path)[2] == "received"
     path.write_text('[log]\nsource = "invalid"\n')

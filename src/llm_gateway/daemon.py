@@ -8,7 +8,7 @@
     lmg proxy models       the models each harness lists, as /v1/models would; the gateway need not be running
 
 A daemon is known by its port: its pid and console output are in ~/.lmg/daemon/PORT.pid and PORT.log, so `stop` and
-`status` work from any folder. It reads ~/.lmg/config.toml unless --config points elsewhere, and ~/.lmg/.env.
+`status` work from any folder. It reads ~/.lmg/config.toml unless --config points elsewhere.
 """
 import argparse
 import asyncio

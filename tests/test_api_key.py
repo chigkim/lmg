@@ -1,55 +1,46 @@
-"""Gateway keys use ~/.lmg/.env, never the caller's working directory."""
-from pathlib import Path
-
+"""Gateway keys come from the environment or config.toml, never the caller's working directory."""
 import pytest
-from dotenv import dotenv_values
 
 from llm_gateway import gateway
 
 
-def test_dotenv_path_is_in_lmg_home():
-    assert gateway.DOTENV == Path.home() / ".lmg" / ".env"
-
-
 @pytest.fixture
-def key_paths(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
+def config(tmp_path, monkeypatch):
     caller = tmp_path / "caller"
-    repo.mkdir()
     caller.mkdir()
-    monkeypatch.setattr(gateway, "DOTENV", repo / ".env")
+    caller.joinpath(".env").write_text("GATEWAY_API_KEY=caller-key\n", encoding="utf-8")
     monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
     monkeypatch.chdir(caller)
-    return repo / ".env", caller / ".env"
+    return tmp_path / "home" / "config.toml"
 
 
-def test_repository_key_is_used_instead_of_caller_or_parent_key(key_paths):
-    repo, caller = key_paths
-    repo.write_text("GATEWAY_API_KEY=repo-key\n", encoding="utf-8")
-    caller.write_text("GATEWAY_API_KEY=caller-key\n", encoding="utf-8")
-    caller.parent.parent.joinpath(".env").write_text("GATEWAY_API_KEY=parent-key\n", encoding="utf-8")
-    assert gateway.api_key() == "repo-key"
+def test_missing_config_is_written_with_the_default_key(config):
+    assert gateway.api_key(config) == gateway.DEFAULT_KEY == "lmg-proxy"
+    assert config.read_text(encoding="utf-8") == gateway.DEFAULT_CONFIG.read_text(encoding="utf-8")
 
 
-def test_environment_key_takes_priority_without_creating_dotenv(key_paths, monkeypatch):
-    repo, caller = key_paths
+def test_config_key_is_used_instead_of_caller_dotenv(config):
+    config.parent.mkdir()
+    config.write_text('[proxy]\napi_key = " config-key "\n', encoding="utf-8")
+    assert gateway.api_key(config) == "config-key"
+
+
+@pytest.mark.parametrize("text", ["", "[proxy]\n", '[proxy]\napi_key = ""\n'])
+def test_config_without_key_uses_the_default(config, text):
+    config.parent.mkdir()
+    config.write_text(text, encoding="utf-8")
+    assert gateway.api_key(config) == "lmg-proxy"
+
+
+def test_environment_key_takes_priority(config, monkeypatch):
+    config.parent.mkdir()
+    config.write_text('[proxy]\napi_key = "config-key"\n', encoding="utf-8")
     monkeypatch.setenv("GATEWAY_API_KEY", "environment-key")
-    assert gateway.api_key() == "environment-key"
-    assert not repo.exists()
-    assert not caller.exists()
+    assert gateway.api_key(config) == "environment-key"
 
 
-@pytest.mark.parametrize("existing", [None, "OTHER=value", "OTHER=value\n"])
-def test_generated_key_is_saved_only_in_repository_and_reused(key_paths, existing, capsys):
-    repo, caller = key_paths
-    caller.write_text("GATEWAY_API_KEY=caller-key\n", encoding="utf-8")
-    if existing is not None:
-        repo.write_text(existing, encoding="utf-8")
-    key = gateway.api_key()
-    assert key and key != "caller-key"
-    assert dotenv_values(repo)["GATEWAY_API_KEY"] == key
-    assert gateway.api_key() == key
-    assert caller.read_text(encoding="utf-8") == "GATEWAY_API_KEY=caller-key\n"
-    if existing is not None:
-        assert repo.read_text(encoding="utf-8").startswith("OTHER=value\n")
-    assert key not in capsys.readouterr().err
+def test_key_that_is_not_a_string_is_refused(config):
+    config.parent.mkdir()
+    config.write_text("[proxy]\napi_key = 123\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="api_key"):
+        gateway.api_key(config)

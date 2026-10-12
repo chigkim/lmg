@@ -1,4 +1,9 @@
-# llm-gateway settings. Read from ~/.lmg/config.toml, or wherever --config points; this copy in the repository is the example.
+# llm-gateway settings. lmg writes this file to ~/.lmg/config.toml, or wherever --config points, when none is there yet.
+
+[proxy]
+# The key clients send as Authorization: Bearer KEY. GATEWAY_API_KEY in the environment takes priority.
+# Change it if other people or programs on this machine should not use your plans.
+api_key = "lmg-proxy"
 
 [log]
 # One file per conversation; {session} becomes yy-mm-dd hh-mm-ss session-id.
@@ -7,9 +12,9 @@ file = "logs/{session}.jsonl"
 # How much it gets. Each level holds everything below it:
 #   off    nothing
 #   error  a request that was refused or failed, and why
-#   info   every request: model, timing, usage (the default)
+#   info   every request: model, timing, usage (the level when none is set)
 #   debug  and its input and reply; a lone message's system prompt and tools get their own entry
 #   trace  and the whole request body and every event the model sent
-level = "debug"
+level = "off"
 # Log client content (received) or provider-facing content after adaptation (sent).
-source = "sent"
+source = "received"
