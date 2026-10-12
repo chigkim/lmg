@@ -13,7 +13,7 @@ from llm_gateway import ask, calls, cli, daemon, tasks, usage
 
 def test_read_mode_gives_each_harness_its_own_limit():
     assert ask.flags("codex", "read") == ["-s", "read-only"]
-    assert "--tools" in ask.flags("claude", "read") and "--strict-mcp-config" in ask.flags("claude", "read")
+    assert "--tools" in ask.flags("claude", "read") and "--strict-mcp-config" not in ask.flags("claude", "read")
     # agy has no read-only setting: read is its bypass left off.
     assert ask.flags("agy", "read") == []
     for harness in ask.HARNESSES:
@@ -23,6 +23,8 @@ def test_read_mode_gives_each_harness_its_own_limit():
 def test_codex_may_run_commands_to_read_but_the_others_are_told_not_to():
     assert "do not run any command" not in ask.ask_text("codex", "read", "t1.md", "r1.md")
     assert "do not run any command" in ask.ask_text("agy", "read", "t1.md", "r1.md")
+    assert "do not run any command" in ask.ask_text("claude", "read", "t1.md", "r1.md")
+    assert "the web" in ask.ask_text("claude", "read", "t1.md", "r1.md")
     assert ask.ask_text("claude", "edit", "t1.md", "r1.md") == "Read t1.md and do what it says." + ask.SAVED.format(
         answer="r1.md")
 
@@ -239,9 +241,9 @@ def test_usage_mistakes_exit_2_without_running_anything(tmp_path, capsys):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_claude_read_mode_is_the_three_tools_and_nothing_else():
-    assert ask.flags("claude", "read") == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
-                                           "--permission-mode", "dontAsk", "--strict-mcp-config"]
+def test_claude_read_mode_is_reading_the_web_and_mcp_and_no_writing_tool():
+    assert ask.flags("claude", "read") == ["--tools", "Read,Grep,Glob,WebSearch,WebFetch,ToolSearch",
+                                           "--permission-mode", "bypassPermissions"]
 
 
 def test_lmg_hands_each_group_the_rest_of_the_line(monkeypatch):

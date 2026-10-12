@@ -52,8 +52,10 @@ TOKEN_FIELDS = ["time", "note", "repo", "model", "input", "cache_read", "cache_w
 # tools, and a command refused ends an agy run with no answer.
 READ_ONLY = {
     "codex": " The sandbox is read-only: read and search as you like, but do not try to write, edit or create a file.",
-    "other": " You may only read and search files: do not write, edit or create one, and do not run any command,"
-             " which is refused and ends the job.",
+    "claude": " You may read and search files, search and fetch the web, and use your MCP tools: do not write, edit"
+              " or create a file, and do not run any command.",
+    "agy": " You may only read and search files: do not write, edit or create one, and do not run any command,"
+           " which is refused and ends the job.",
 }
 
 
@@ -73,7 +75,10 @@ def ask_text(harness, mode, task, answer, resume=None):
     text = (AGAIN if resume else ASK).format(task=task) + SAVED.format(answer=pathlib.Path(answer).name)
     if mode == "edit":
         return text
-    return text + READ_ONLY["codex" if harness == "codex" else "other"]
+    return text + READ_ONLY[harness]
+
+
+READ_TOOLS = "Read,Grep,Glob,WebSearch,WebFetch,ToolSearch"
 
 
 def flags(harness, mode):
@@ -81,9 +86,10 @@ def flags(harness, mode):
     if harness == "codex":
         return ["-s", "read-only"] if mode == "read" else ["--dangerously-bypass-approvals-and-sandbox"]
     if harness == "claude":
-        # --tools leaves only the three; dontAsk denies whatever is not allowed, so they are allowed by name.
-        return (["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk",
-                 "--strict-mcp-config"] if mode == "read" else ["--dangerously-skip-permissions"])
+        # --tools leaves only these built-ins, so nothing can write a file or run a command; MCP servers are not
+        # built-ins and stay, and the bypass lets them and the web run unprompted. ToolSearch finds deferred MCP tools.
+        return (["--tools", READ_TOOLS, "--permission-mode", "bypassPermissions"] if mode == "read"
+                else ["--dangerously-skip-permissions"])
     return [] if mode == "read" else ["--dangerously-skip-permissions"]
 
 

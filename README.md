@@ -226,12 +226,12 @@ A folder inside a repository shows up there as untracked files. Ignore it in tha
 
 ### Modes
 
-`read` lets the agent read and search files, and nothing else. `edit` bypasses every permission prompt and sandbox.
+`read` lets the agent read and search files and write none; Claude may also use the web and its MCP servers. `edit` bypasses every permission prompt and sandbox.
 
 | Harness | `read` | `edit` |
 | --- | --- | --- |
 | agy | No bypass flag, so headless agy denies every write and command. A denial ends the run with no answer, and `lmg ask` says so. | `--dangerously-skip-permissions` |
-| claude | Only `Read`, `Grep` and `Glob`, and no MCP servers. Hooks in your settings or the repository's still run. | `--dangerously-skip-permissions` |
+| claude | Only the built-ins `Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch` and `ToolSearch`, plus every MCP server it is configured with, all run without prompting. No built-in can write a file or run a command, but an MCP tool may act on whatever its server reaches. Hooks in your settings or the repository's still run. | `--dangerously-skip-permissions` |
 | codex | The read-only sandbox, where it may still run commands to read with. | `--dangerously-bypass-approvals-and-sandbox` |
 
 Where a job runs is where it starts, not a fence. An edit job can reach anything your account can, and a read job can read files outside it.
