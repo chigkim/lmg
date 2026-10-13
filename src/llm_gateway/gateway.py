@@ -787,15 +787,23 @@ async def claude(model, body):
     if not convo:
         raise Refused(400, "the request has no conversation in it")
     emitter = Emitter(f"anthropic/{model}")
-    tail = []
+    # A message the user typed while a tool ran comes after its result; it goes back with the results, so the
+    # paused session carries on instead of a fresh one rewriting the whole conversation to the cache.
+    typed = []
     for e in reversed(convo):
+        if e[0] != "user":
+            break
+        typed.append(e)
+    tail = []
+    for e in reversed(convo[:len(convo) - len(typed)]):
         if e[0] != "result":
             break
         tail.append(e)
     owners = {ClaudeSession.paused.get(e[1]) for e in tail}
     if tail and len(owners) == 1 and None not in owners:
         owner = next(iter(owners))
-        if owner.key != fingerprint(model, system, tools) or owner.history != history_hash(convo[:-len(tail)]):
+        if (owner.key != fingerprint(model, system, tools)
+                or owner.history != history_hash(convo[:len(convo) - len(typed) - len(tail)])):
             # Compaction can preserve pending call IDs while replacing all the history before them.
             # Handing back only results would silently keep Claude's old, uncompact conversation.
             async with owner.lock:
@@ -805,7 +813,12 @@ async def claude(model, body):
                 SESSIONS.discard(owner)
             owners = set()
     if tail and len(owners) == 1 and None not in owners:
-        session, route, run = owners.pop(), "resumed", {"results": {e[1]: e[2] for e in tail}}
+        results = {e[1]: e[2] for e in tail}
+        if typed:
+            note = [{"type": "text", "text": "The user sent this message while the tool ran:"}]
+            results[tail[0][1]] = tail[0][2] + note + [p for e in reversed(typed) for p in e[1]]
+        route = "resumed, with the user's message" if typed else "resumed"
+        session, run = owners.pop(), {"results": results}
     else:
         news = []
         for e in reversed(convo):
@@ -838,7 +851,7 @@ async def claude(model, body):
     log(f"  anthropic/{model}: {route}")
     async with session.lock:
         # Two requests carrying the same results can both find the paused session; only the first hands them back.
-        if route == "resumed" and any(ClaudeSession.paused.get(e[1]) is not session for e in tail):
+        if route.startswith("resumed") and any(ClaudeSession.paused.get(e[1]) is not session for e in tail):
             raise Refused(409, "those tool results were already handed back by another request")
         session.said = said(convo)
         async for e in session.turn(emitter, **run):

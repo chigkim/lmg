@@ -140,6 +140,26 @@ def test_paused_session_resumes_only_unchanged_history(fake, changed, parallel):
         assert fake.made[-1].handed == [gateway.transcript(gateway.entries(body)[1])]
 
 
+def test_a_message_typed_while_a_tool_ran_goes_back_with_its_result(fake):
+    async def conversation():
+        await drained(said_to("go"))
+        session = fake.made[0]
+        session.reply, session.calls = "", [("c1", "f", "{}")]
+        await drained(said_to("go", "ok", "next"))
+        session.calls = []
+        await drained({"model": "anthropic/sonnet", "input": said_to("go", "ok", "next")["input"] + [
+            {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "done"},
+            {"type": "message", "role": "user", "content": "also this"}]})
+        return session
+
+    session = asyncio.run(conversation())
+    assert len(fake.made) == 1 and not session.closed
+    assert session.handed[-1] == {"c1": [{"type": "text", "text": "done"},
+                                          {"type": "text", "text": "The user sent this message while the tool ran:"},
+                                          {"type": "text", "text": "also this"}]}
+
+
 def test_editing_an_earlier_assistant_reply_starts_a_fresh_idle_session(fake):
     asyncio.run(drained(said_to("hello")))
     asyncio.run(drained(said_to("hello", "ok", "next")))
