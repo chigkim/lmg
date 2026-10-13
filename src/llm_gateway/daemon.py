@@ -8,11 +8,13 @@
     lmg proxy models       the models each harness lists, as /v1/models would; the gateway need not be running
 
 A daemon is known by its port: its pid and console output are in ~/.lmg/daemon/PORT.pid and PORT.log, so `stop` and
-`status` work from any folder. It reads ~/.lmg/config.toml unless --config points elsewhere.
+`status` work from any folder. It reads ~/.lmg/config.toml unless --config points elsewhere. It listens on 127.0.0.1
+unless --host names another address; `status` probes --host too, so give it the address `start` was given.
 """
 import argparse
 import asyncio
 import contextlib
+import ipaddress
 import os
 import pathlib
 import signal
@@ -87,10 +89,30 @@ def born(pid):
     return " ".join(started.split()) or None
 
 
-def listening(port):
+def reachable(host):
+    """The address to connect to for a gateway bound to HOST: a wildcard is reached on loopback."""
+    return {"0.0.0.0": "127.0.0.1", "::": "::1", "": "127.0.0.1"}.get(host, host)
+
+
+def loopback(host):
+    """Whether HOST is reachable only from this machine."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def url(host, port):
+    host = reachable(host)
+    return f"http://[{host}]:{port}/v1" if ":" in host else f"http://{host}:{port}/v1"
+
+
+def listening(host, port):
     """Whether something accepts connections on the port. A bare connect, so the gateway logs no refused request."""
     try:
-        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+        socket.create_connection((reachable(host), port), timeout=2).close()
     except OSError:
         return False
     return True
@@ -137,12 +159,13 @@ def started(args):
     if pid:
         print(f"already running on port {args.port}, pid {pid}")
         return 0
-    if listening(args.port):
+    if listening(args.host, args.port):
         print(f"port {args.port} is already in use by something this command did not start")
         return 1
     STATE.mkdir(parents=True, exist_ok=True)
     config = str(pathlib.Path(args.config).resolve())
-    argv = [sys.executable, "-m", "llm_gateway", "proxy", "run", "--port", str(args.port), "--config", config]
+    argv = [sys.executable, "-m", "llm_gateway", "proxy", "run", "--host", args.host, "--port", str(args.port),
+            "--config", config]
     with open(log_file(args.port), "a", encoding="utf-8") as out:
         out.write(f"\n==== start {time.strftime('%Y-%m-%d %H:%M:%S')} in {os.getcwd()}\n")
         out.flush()
@@ -154,8 +177,8 @@ def started(args):
             pid_file(args.port).unlink(missing_ok=True)
             print(f"the gateway exited with code {child.returncode}; see {log_file(args.port)}")
             return 1
-        if listening(args.port):
-            print(f"started on http://127.0.0.1:{args.port}/v1, pid {child.pid}; log {log_file(args.port)}")
+        if listening(args.host, args.port):
+            print(f"started on {url(args.host, args.port)}, pid {child.pid}; log {log_file(args.port)}")
             return 0
         time.sleep(0.3)
     kill(child.pid)
@@ -204,7 +227,7 @@ def restart(args):
 def status(args):
     pid = running(args.port)
     if pid:
-        answer = "listening" if listening(args.port) else "NOT answering"
+        answer = "listening" if listening(args.host, args.port) else "NOT answering"
         print(f"running on port {args.port}, pid {pid}, {answer}; log {log_file(args.port)}")
         return 0
     print(f"not running on port {args.port}")
@@ -235,10 +258,12 @@ def models(args):
 def main(argv):
     parser = argparse.ArgumentParser(prog="lmg proxy", description=__doc__.split("\n")[0])
     parser.add_argument("command", nargs="?", default="run", choices=("run", "start", "stop", "restart", "status", "models"))
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="address to listen on, e.g. 0.0.0.0 for every interface (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8797)
     parser.add_argument("--config", default=str(HOME / "config.toml"), help="settings file (default: ~/.lmg/config.toml)")
     args = parser.parse_args(argv)
     if args.command == "run":
         from .gateway import serve
-        return serve(args.port, args.config)
+        return serve(args.host, args.port, args.config)
     return {"start": start, "stop": stop, "restart": restart, "status": status, "models": models}[args.command](args)

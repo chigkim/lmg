@@ -25,6 +25,7 @@ lmg:
     restart:                         # stop, then start
     status:                          # exit 0 when running, 3 when not
     options:
+      --host ADDR:                   # default 127.0.0.1; 0.0.0.0 for every interface, which needs a key of your own
       --port N:                      # default 8797
       --config PATH:                 # default ~/.lmg/config.toml
   ask:                               # a job in a folder of your own
@@ -71,7 +72,7 @@ uv run lmg proxy stop
 uv run lmg proxy run        # or in this console, until Ctrl-C
 ```
 
-Every command takes `--port N` (default 8797) and `--config PATH` (default `~/.lmg/config.toml`). Installed as a tool, `lmg proxy` runs without `uv run`.
+Every command takes `--host ADDR` (default 127.0.0.1), `--port N` (default 8797) and `--config PATH` (default `~/.lmg/config.toml`). Installed as a tool, `lmg proxy` runs without `uv run`.
 
 What lmg keeps for you is in `~/.lmg`, whatever folder you run it from: `config.toml` (the key and log settings, written with the defaults on the first `lmg proxy` run), `logs/` (conversation logs, relative to `config.toml`), `daemon/` (pid, lock and console log per port), `usage-ledger.csv` and `token-ledger.csv`, plus `memory/` and `prompts-PORT/` for the Claude sessions.
 
@@ -139,7 +140,7 @@ Unlike the Pi bridge, the gateway receives no structured prompt metadata, so thi
 
 ### Limits
 
-- It binds to `127.0.0.1` only. Anything on this machine that knows the key, or can read `config.toml`, can use it.
+- It binds to `127.0.0.1` unless `--host` names another address, such as `0.0.0.0` for every interface. Off loopback it refuses to start with the default key, since that key is public; set `GATEWAY_API_KEY` or `[proxy] api_key`. The traffic is plain HTTP, so the key and every prompt cross the network unencrypted. Give `status` the same `--host` that `start` got, since it probes that address. Anything that can reach the port and knows the key, or can read `config.toml`, can use it.
 - Anthropic bills requests it identifies as a third-party app to Extra Usage instead of plan limits. An unadapted full agent harness prompt, such as Pi's, can be refused with `Third-party apps now draw from extra usage` unless Extra Usage is on; the recognized Pi scaffold is adapted as described above. The check reads the prompt's content, not the fact that it is another agent's: Pi's prompt is refused for the routing list in its `<docs>` block (extensions, themes, skills, ..., `pi packages`, MCP servers), where no one item fails alone and dropping `custom providers` or `pi packages` from that line alone lets it pass, while its opening line naming Pi passes by itself; Hermes Agent's own 15,000-character prompt, which names Nous Research, passed on Haiku 4.5 and Opus 5.5 in September 2026, as did Codex's. OpenCode's main prompt is refused like Pi's, while its short session-title prompt passes.
 - A conversation with no live Claude session (after a restart, or a client that edited its history) is replayed to a fresh session as a transcript.
 - Claude's thinking is not passed back. The Codex backend drops fields it does not accept, such as `temperature`.

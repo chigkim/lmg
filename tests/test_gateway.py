@@ -332,6 +332,24 @@ def test_a_start_time_that_cannot_be_read_is_no_match(tmp_path, monkeypatch):
     assert daemon.running(1) is None
 
 
+def test_a_wildcard_host_is_reached_on_loopback():
+    assert daemon.url("0.0.0.0", 8797) == "http://127.0.0.1:8797/v1"
+    assert daemon.url("::", 8797) == "http://[::1]:8797/v1"
+    assert daemon.url("192.168.1.9", 8797) == "http://192.168.1.9:8797/v1"
+    assert [daemon.loopback(h) for h in ("127.0.0.1", "::1", "localhost", "0.0.0.0", "box.lan")] == [True] * 3 + [False] * 2
+
+
+def test_off_loopback_the_default_key_is_refused(tmp_path, monkeypatch):
+    monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
+    monkeypatch.setattr(gateway, "WORKDIR", str(tmp_path))
+    monkeypatch.setattr(gateway, "api_key", lambda path: gateway.DEFAULT_KEY)
+    monkeypatch.setattr(gateway, "configured", lambda path: (None, 0, None))
+    for name in ("LOG", "LEVEL", "SOURCE", "PROMPTS"):  # serve sets them; put them back after
+        monkeypatch.setattr(gateway, name, getattr(gateway, name))
+    with pytest.raises(SystemExit, match="default API key"):
+        gateway.serve("0.0.0.0", 1, str(tmp_path / "config.toml"))
+
+
 async def raising(error):
     raise error
     yield

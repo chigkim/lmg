@@ -1,6 +1,6 @@
-"""A small LLM gateway on loopback: OpenAI's Responses and Chat Completions APIs in, subscription plans out.
+"""A small LLM gateway, on loopback unless told otherwise: OpenAI's Responses and Chat Completions APIs in, subscription plans out.
 
-    uv run llm-gateway [--port 8797]
+    uv run llm-gateway [--host 127.0.0.1] [--port 8797]
 
 A model is named provider/model, as in LiteLLM:
 
@@ -1350,12 +1350,16 @@ MEMORY = str(pathlib.Path(WORKDIR) / "memory")  # Claude Code's auto memory, one
 PROMPTS = pathlib.Path(WORKDIR) / "prompts"  # one folder a port once serving, so no gateway sweeps another's
 
 
-def serve(port, config):
-    """Serve on 127.0.0.1:port until stopped, with the settings in the config file."""
+def serve(host, port, config):
+    """Serve on host:port until stopped, with the settings in the config file."""
+    from .daemon import loopback, url
     global LOG, LEVEL, SOURCE, PROMPTS
     LOG, LEVEL, SOURCE = configured(config)
     PROMPTS = pathlib.Path(WORKDIR) / f"prompts-{port}"
     key = api_key(config)
+    # The default key is in the README, so off loopback it would let anyone on the network spend both plans.
+    if key == DEFAULT_KEY and not loopback(host):
+        sys.exit(f"refusing to listen on {host} with the default API key; set GATEWAY_API_KEY or [proxy] api_key")
     os.makedirs(PROMPTS, exist_ok=True)
     for left in PROMPTS.glob("system-*.md"):  # left by this port's last gateway, which `stop` kills outright
         left.unlink(missing_ok=True)
@@ -1370,5 +1374,5 @@ def serve(port, config):
     app.on_cleanup.append(cleanup)
     log(f"claude: {CLAUDE or 'the SDK default'}")
     log(f"log: {f'{LOG} at {LEVELS[LEVEL]}' if LOG else 'off'}")
-    log(f"listening on http://127.0.0.1:{port}/v1")
-    web.run_app(app, host="127.0.0.1", port=port, print=None)
+    log(f"listening on {host} port {port}, at {url(host, port)} from this machine")
+    web.run_app(app, host=host, port=port, print=None)
