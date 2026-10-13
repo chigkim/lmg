@@ -532,7 +532,8 @@ def transcript(convo):
                "\n\n<transcript>")]
     for e in convo:
         if e[0] == "call":
-            blocks.append(f"\n\n[assistant called the tool {e[2]}, call {e[1]}]\n{e[3]}")
+            # The name Claude must call: told the client's bare name, its first call often copied it and was refused.
+            blocks.append(f"\n\n[assistant called the tool {PREFIX}{e[2]}, call {e[1]}]\n{e[3]}")
             continue
         blocks.append(f"\n\n[tool result for call {e[1]}]\n" if e[0] == "result" else f"\n\n[{e[0]}]\n")
         for p in e[-1]:
@@ -593,6 +594,7 @@ class ClaudeSession:
     def __init__(self, model, system, tools, effort):
         self.model, self.key, self.said = model, fingerprint(model, system, tools), None
         self.history = None
+        self.names = {name for name, *_ in tools}
         self.custom = {name for name, _, _, custom in tools if custom}
         self.events, self.futures, self.waiting = asyncio.Queue(), {}, {}
         self.blocks, self.stop, self.used, self.closed = {}, None, time.monotonic(), False
@@ -657,12 +659,20 @@ class ClaudeSession:
             return
         ev, kind = message.event, message.event.get("type")
         if kind == "message_start":
-            self.stop = None
+            self.stop, self.called, self.rejected = None, False, False
             self.events.put_nowait(("usage_start", ev["message"].get("usage") or {}))
         elif kind == "content_block_start":
             block = ev["content_block"]
             if block.get("type") == "tool_use":
-                self.blocks[ev["index"]] = {"id": block["id"], "name": block["name"], "args": ""}
+                # Claude Code runs only the client's tools, named PREFIX + name, and answers any other call itself
+                # with "No such tool available". Such a call gets no handler, so a future queued for it would hand
+                # the next call of that name this one's result, and every later one the one before's.
+                if block["name"].startswith(PREFIX) and block["name"].removeprefix(PREFIX) in self.names:
+                    self.blocks[ev["index"]] = {"id": block["id"], "name": block["name"], "args": ""}
+                    self.called = True
+                else:
+                    log(f"  Claude called {block['name']}, which Claude Code refuses; not passed on")
+                    self.rejected = True
         elif kind == "content_block_delta":
             delta = ev["delta"]
             if delta.get("type") == "text_delta":
@@ -682,7 +692,8 @@ class ClaudeSession:
         elif kind == "message_delta":
             self.stop = (ev.get("delta") or {}).get("stop_reason")
             self.events.put_nowait(("usage", ev.get("usage") or {}))
-        elif kind == "message_stop" and self.stop == "tool_use":
+        elif kind == "message_stop" and self.stop == "tool_use" and (self.called or not self.rejected):
+            # A reply whose only calls were refused goes on by itself: Claude Code answers them and asks again.
             self.events.put_nowait(("pause",))
 
     async def turn(self, emitter, send=None, results=None):

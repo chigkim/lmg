@@ -529,7 +529,7 @@ def test_a_parallel_call_whose_handler_starts_after_the_results_still_gets_its_o
         session.ready, session.closed, session.events = asyncio.Event(), False, asyncio.Queue()
         session.ready.set()
         session.futures, session.waiting, session.blocks, session.custom = {}, {}, {}, set()
-        session.sent_system, session.sent_tools, session.stop = "", [], None
+        session.sent_system, session.sent_tools, session.stop, session.names = "", [], None, {"bash"}
         for index, call_id in enumerate(("call_a", "call_b")):
             for event in ({"type": "content_block_start", "index": index,
                            "content_block": {"type": "tool_use", "id": call_id, "name": gateway.PREFIX + "bash"}},
@@ -549,6 +549,48 @@ def test_a_parallel_call_whose_handler_starts_after_the_results_still_gets_its_o
     first, second = asyncio.run(handled())
     assert first == {"content": [{"type": "text", "text": "call_a"}]}
     assert second == {"content": [{"type": "text", "text": "call_b"}]}
+
+
+def test_a_call_claude_code_refuses_is_not_passed_on_or_given_the_next_calls_result(monkeypatch):
+    monkeypatch.setattr(gateway.ClaudeSession, "paused", {})
+    monkeypatch.setattr(gateway, "sent_request", lambda *args: None)
+    monkeypatch.setattr(gateway, "log", lambda *parts: None)
+
+    async def handled():
+        session = gateway.ClaudeSession.__new__(gateway.ClaudeSession)
+        session.ready, session.closed, session.events = asyncio.Event(), False, asyncio.Queue()
+        session.ready.set()
+        session.futures, session.waiting, session.blocks, session.custom = {}, {}, {}, set()
+        session.sent_system, session.sent_tools, session.names = "", [], {"bash"}
+        # Claude calls bash without the prefix, Claude Code answers "No such tool available", and Claude asks again.
+        for call_id, name in (("call_bare", "bash"), ("call_good", gateway.PREFIX + "bash")):
+            for event in ({"type": "message_start", "message": {"usage": {}}},
+                          {"type": "content_block_start", "index": 0,
+                           "content_block": {"type": "tool_use", "id": call_id, "name": name}},
+                          {"type": "content_block_stop", "index": 0},
+                          {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {}},
+                          {"type": "message_stop"}):
+                session._take(gateway.StreamEvent(uuid="event", session_id="session", event=event))
+        queued = [session.events.get_nowait()[0:2] for _ in range(session.events.qsize())]
+        session.events.put_nowait(("pause",))
+        handler = asyncio.create_task(session._tool("bash", "", {}).handler({}))
+        await asyncio.sleep(0)
+        async for _ in session.turn(gateway.Emitter("anthropic/opus"),
+                                    results={"call_good": [{"type": "text", "text": "good"}]}):
+            pass
+        return queued, await handler
+
+    queued, result = asyncio.run(handled())
+    # The refused call reaches neither the client nor a pause; the good one is the only call, and gets its own result.
+    assert [e for e in queued if e[0] in ("call", "pause")] == [("call", "call_good"), ("pause",)]
+    assert result == {"content": [{"type": "text", "text": "good"}]}
+
+
+def test_a_transcript_names_each_call_as_claude_must_call_it():
+    convo = [("user", [{"type": "text", "text": "go"}]), ("call", "c1", "bash", "{}"),
+             ("result", "c1", [{"type": "text", "text": "done"}])]
+    text = gateway.transcript(convo)[0]["text"]
+    assert f"[assistant called the tool {gateway.PREFIX}bash, call c1]" in text
 
 
 def test_two_conversations_alike_but_for_an_image_are_two_conversations():
