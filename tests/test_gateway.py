@@ -551,7 +551,8 @@ def test_a_parallel_call_whose_handler_starts_after_the_results_still_gets_its_o
     assert second == {"content": [{"type": "text", "text": "call_b"}]}
 
 
-def test_a_call_claude_code_refuses_is_not_passed_on_or_given_the_next_calls_result(monkeypatch):
+@pytest.mark.parametrize("refused", ["bare name", "not JSON"])
+def test_a_call_claude_code_refuses_is_not_passed_on_or_given_the_next_calls_result(monkeypatch, refused):
     monkeypatch.setattr(gateway.ClaudeSession, "paused", {})
     monkeypatch.setattr(gateway, "sent_request", lambda *args: None)
     monkeypatch.setattr(gateway, "log", lambda *parts: None)
@@ -562,11 +563,15 @@ def test_a_call_claude_code_refuses_is_not_passed_on_or_given_the_next_calls_res
         session.ready.set()
         session.futures, session.waiting, session.blocks, session.custom = {}, {}, {}, set()
         session.sent_system, session.sent_tools, session.names = "", [], {"bash"}
-        # Claude calls bash without the prefix, Claude Code answers "No such tool available", and Claude asks again.
-        for call_id, name in (("call_bare", "bash"), ("call_good", gateway.PREFIX + "bash")):
+        # Claude Code answers the refused call itself ("No such tool available", or InputValidationError for
+        # arguments that are not JSON), and Claude asks again.
+        first = {"bare name": ("bash", "{}"), "not JSON": (gateway.PREFIX + "bash", '{"command": "echo \\`"}')}[refused]
+        for call_id, (name, args) in (("call_refused", first), ("call_good", (gateway.PREFIX + "bash", "{}"))):
             for event in ({"type": "message_start", "message": {"usage": {}}},
                           {"type": "content_block_start", "index": 0,
                            "content_block": {"type": "tool_use", "id": call_id, "name": name}},
+                          {"type": "content_block_delta", "index": 0,
+                           "delta": {"type": "input_json_delta", "partial_json": args}},
                           {"type": "content_block_stop", "index": 0},
                           {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {}},
                           {"type": "message_stop"}):

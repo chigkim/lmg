@@ -669,7 +669,6 @@ class ClaudeSession:
                 # the next call of that name this one's result, and every later one the one before's.
                 if block["name"].startswith(PREFIX) and block["name"].removeprefix(PREFIX) in self.names:
                     self.blocks[ev["index"]] = {"id": block["id"], "name": block["name"], "args": ""}
-                    self.called = True
                 else:
                     log(f"  Claude called {block['name']}, which Claude Code refuses; not passed on")
                     self.rejected = True
@@ -682,10 +681,19 @@ class ClaudeSession:
         elif kind == "content_block_stop" and ev["index"] in self.blocks:
             block = self.blocks.pop(ev["index"])
             name = block["name"].removeprefix(PREFIX)
+            args = block["args"] or "{}"
+            try:
+                json.loads(args)
+            except ValueError:
+                # Claude Code answers this one too, with InputValidationError, and runs no handler. Passed on, the
+                # client would run what it could repair of it, and keep arguments no longer the ones recorded here.
+                log(f"  Claude called {name} with arguments not JSON, which Claude Code refuses; not passed on")
+                self.rejected = True
+                return
+            self.called = True
             future = self.futures[block["id"]] = asyncio.get_running_loop().create_future()
             self.waiting.setdefault(name, asyncio.Queue()).put_nowait(future)
             ClaudeSession.paused[block["id"]] = self
-            args = block["args"] or "{}"
             if name in self.custom:
                 args = json.loads(args).get("input", "")
             self.events.put_nowait(("call", block["id"], name, args, name in self.custom))
