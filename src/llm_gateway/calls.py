@@ -41,8 +41,10 @@ HOME = pathlib.Path.home()
 PRICES = pathlib.Path(__file__).with_name("prices.csv")
 PLANS = ("claude", "codex", "agy")
 # agy stores its model as a number. Each was matched to the one model name found in the conversation files that used only it.
-AGY_MODELS = {1318: "gemini-3.8-flash-high", 1319: "gemini-3.8-flash-medium", 1320: "gemini-3.8-flash-low",
-              1298: "gemini-3.7-flash-high", 1020: "gemini-3.5-flash-low"}
+AGY_MODELS = {1417: "gemini-4-argon-high", 1418: "gemini-4-argon-medium", 1419: "gemini-4-argon-low",
+              1318: "gemini-3.8-flash-high", 1319: "gemini-3.8-flash-medium", 1320: "gemini-3.8-flash-low",
+              1298: "gemini-3.7-flash-high", 1020: "gemini-3.5-flash-low",
+              1403: "claude-sonnet-5-5-low", 1035: "claude-sonnet-4-6", 342: "gpt-oss-120b-medium"}
 
 ENTRYPOINTS = {"cli": "claude code", "sdk-ts": "pi bridge", "sdk-cli": "claude -p"}
 # Codex's originators, named as Claude's entry points are: the interactive CLI, under its old name and its new, and exec.
