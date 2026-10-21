@@ -14,7 +14,7 @@ lmg ask review SHA FOLDER                        # Codex review of one commit, i
 
 Options: `--model NAME`, `--reasoning LEVEL` (the harness's reasoning effort for this run, such as `high`; give it again on a follow-up; Claude and agy take `low|medium|high|xhigh|max`), `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
 
-Default models: agy `gemini-4-argon-medium`, claude `claude-opus-5-5`, codex `gpt-6.1-sol` (also used by `review`). `agy models` lists the names agy accepts, such as `gemini-4-argon-low`, `-medium` and `-high`.
+Each harness has a default model, and `review` uses Codex's. `agy models` lists the names agy accepts for `--model`.
 
 The `lmg` on PATH is an installed copy. After changing the checkout, reinstall it from there (`uv tool install --reinstall .`), or it keeps the old defaults and prices.
 

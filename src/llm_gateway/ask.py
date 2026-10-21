@@ -13,7 +13,7 @@ A mode is what the agent may do. `read` is read and search files, nothing else. 
 prompt and sandbox, so it may write, edit and run anything the machine lets it:
 
     agy     read: no bypass flag, so headless agy denies every write and command; a denial ends the run unanswered
-    claude  read: only Read, Grep and Glob, and no MCP servers
+    claude  read: Read, Grep, Glob, the web and its MCP servers, and no tool that writes a file or runs a command
     codex   read: the read-only sandbox, where it still runs commands to read with
 
 The job is FOLDER/task.md, or TASK.md. The harness runs at the top of the git repository FOLDER is in, or in FOLDER
@@ -528,10 +528,32 @@ def child_usage(thread, since, sessions=None):
     return None
 
 
+# What `lmg ask` alone prints: enough for an agent that has never seen lmg to run its first job.
+GUIDE = """\
+lmg ask: hand one job to agy, Claude Code or Codex.
+
+  lmg ask agy|claude|codex read|edit FOLDER [ID]
+  lmg ask review SHA FOLDER
+
+1. Make a folder and write the whole job in FOLDER/task.md. The agent sees only that file and the repository, not
+   your conversation.
+2. Run, say, `lmg ask claude read FOLDER`. A job takes minutes, so run it in the background.
+3. Read FOLDER/responseN.md, the agent's final message. Check it is a real answer, not empty or a refusal.
+4. To follow up, edit task.md and run the same command with the ID printed at the end of the last run.
+
+read   read and search only; Claude and Codex can also search the web. For research and review.
+edit   no sandbox: it writes files and runs commands. Put FOLDER in a worktree you made; a job in a repository's
+       main checkout is refused unless --force.
+
+--model NAME runs another model than the harness's default.
+Exit 2: the job never started. 124: agy timed out and the answer is partial. 1: the agent stopped without a full
+answer. `lmg ask --help` has the details."""
+
+
 def parse(argv):
     parser = argparse.ArgumentParser(prog="lmg ask", description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit FOLDER [ID], or review SHA FOLDER")
+    parser.add_argument("words", nargs="*", help="agy|claude|codex read|edit FOLDER [ID], or review SHA FOLDER")
     parser.add_argument("--model", help="the harness's model instead of its default")
     parser.add_argument("--reasoning", help="the harness's reasoning effort instead of its own setting, such as high")
     parser.add_argument("--timeout", default="3600s", help="agy's print timeout (default 3600s)")
@@ -543,6 +565,9 @@ def main(argv, command_line=False):
     # Only the real command binds its children to it; a test calling main is not to join a job object.
     args = parse(argv)
     words = args.words
+    if not words:
+        print(GUIDE)
+        return 0
     if command_line:
         bound()
     try:

@@ -251,6 +251,11 @@ def test_an_edit_job_in_a_main_checkout_is_refused_unless_forced_but_not_in_a_wo
     assert [cwd for _, cwd in seen] == [repo, (tmp_path / "wt").resolve()]
 
 
+def test_lmg_ask_alone_prints_the_guide(capsys):
+    assert ask.main([]) == 0
+    assert "task.md" in capsys.readouterr().out
+
+
 def test_usage_mistakes_exit_2_without_running_anything(tmp_path, capsys):
     assert ask.main(["codex", "write", str(tmp_path)]) == 2
     assert ask.main(["nope"]) == 2
