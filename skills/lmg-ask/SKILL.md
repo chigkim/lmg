@@ -14,7 +14,9 @@ lmg ask review SHA FOLDER                        # Codex review of one commit, i
 
 Options: `--model NAME`, `--reasoning LEVEL` (the harness's reasoning effort for this run, such as `high`; give it again on a follow-up; Claude and agy take `low|medium|high|xhigh|max`), `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
 
-Default models: agy `gemini-4-argon-medium`, claude `claude-opus-5-5`, codex `gpt-6.1-sol` (also used by `review`).
+Default models: agy `gemini-4-argon-medium`, claude `claude-opus-5-5`, codex `gpt-6.1-sol` (also used by `review`). `agy models` lists the names agy accepts, such as `gemini-4-argon-low`, `-medium` and `-high`.
+
+The `lmg` on PATH is an installed copy. After changing the checkout, reinstall it from there (`uv tool install --reinstall .`), or it keeps the old defaults and prices.
 
 ## Setting up the folder
 
@@ -28,9 +30,9 @@ Default models: agy `gemini-4-argon-medium`, claude `claude-opus-5-5`, codex `gp
 
 ## Choosing a mode
 
-- `read`: read and search files only. Claude gets only Read, Grep and Glob, with no web search and no MCP servers. Codex gets a read-only sandbox. agy is denied every write and command, and a denied action ends the run without an answer.
-- `edit`: bypasses all permission prompts and sandboxes. The agent can write files and run commands. Use it when the job needs to change code or needs Claude's web search; for research, tell the agent in the task not to edit files.
-- For web research, use `edit` for Claude. In `read` mode, Claude writes from memory and its citations are unchecked.
+- `read`: read and search files only. Claude gets Read, Grep, Glob, WebSearch, WebFetch and ToolSearch plus its MCP servers, and no tool that writes a file or runs a command. Codex gets a read-only sandbox. agy is denied every write and command, and a denied action ends the run without an answer.
+- `edit`: bypasses all permission prompts and sandboxes. The agent can write files and run commands. Use it when the job needs to change code or run commands; for research, tell the agent in the task not to edit files.
+- For web research, Claude works in `read` mode.
 - Codex can search the web in `read` mode, because `web_search = "live"` is set in `~/.codex/config.toml` and its built-in search tool runs outside the sandbox. Use `read` for Codex research.
 
 ## Running and reading results
@@ -38,7 +40,7 @@ Default models: agy `gemini-4-argon-medium`, claude `claude-opus-5-5`, codex `gp
 - Jobs take minutes. Start them with `bg_run` and `isAgent: true`, for example `lmg ask codex read D:\code\git\REPO\.pi\jobs\my-task`, then wait for the notification.
 - Run N copies `task.md` to `taskN.md`, and the agent reads that copy. `task.md` stays in place, so it can be edited for the next run.
 - The answer is the agent's final message, saved by `lmg ask` as `FOLDER/responseN.md`, next to the raw `responseN.jsonl` (and Codex's `responseN.log`).
-- The output ends with the session id, a token line with the API-equivalent cost, the answer path, a ready-made follow-up command, `exit N`, and a usage reading.
+- The output ends with the session id, a token line with the API-equivalent cost (`unknown` when the model has no row in `prices.csv`), the answer path, a ready-made follow-up command, `exit N`, and a usage reading.
 - After a job ends, check the answer file before using it: confirm it exists, has real content, and did not refuse or work around a missing tool. For claude and agy the file is always written, even if empty; Codex writes it only when it finishes.
 - Exit codes: 2 within a second means the job never started (bad argument, missing folder or `task.md`, harness not on PATH, an edit job refused in a main checkout, or a usage ledger that cannot be written, for example because it is open in Excel). 124 means agy hit `--timeout` and the answer is partial, even though agy itself reports success. 1 with a line like `ended early`, `failed` or `denied ...` means claude or agy stopped without a full answer. Read the task output before retrying.
 - To follow up, edit `task.md` and run the same command with the id printed at the end of the last run. A follow-up may switch modes. The id is saved even when a run is killed or times out, so a stopped job can be continued.
