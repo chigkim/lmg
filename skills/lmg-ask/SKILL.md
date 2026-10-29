@@ -12,9 +12,9 @@ lmg ask agy|claude|codex read|edit FOLDER [ID]   # FOLDER/task.md as a new job, 
 lmg ask review SHA FOLDER                        # Codex review of one commit, its answer in FOLDER
 ```
 
-Options: `--model NAME`, `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
+Options: `--model NAME`, `--reasoning LEVEL` (the harness's reasoning effort for this run, such as `high`; give it again on a follow-up; Claude and agy take `low|medium|high|xhigh|max`), `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
 
-Default models: agy `gemini-3.8-flash-medium`, claude `claude-opus-5-5`, codex `gpt-6.1-sol` (also used by `review`).
+Default models: agy `gemini-4-argon-medium`, claude `claude-opus-5-5`, codex `gpt-6.1-sol` (also used by `review`).
 
 ## Setting up the folder
 

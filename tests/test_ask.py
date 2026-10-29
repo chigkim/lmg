@@ -43,6 +43,27 @@ def test_a_codex_follow_up_sets_its_sandbox_again(tmp_path):
     assert 'sandbox_mode="read-only"' in argv and "-C" not in argv
 
 
+def test_reasoning_is_each_harness_own_effort_flag_on_every_run(tmp_path):
+    answer = tmp_path / "a.md"
+    for resume in (None, "abc"):
+        argv = ask.command("codex", "read", "m", tmp_path, "t.md", answer, resume=resume, reasoning="high")
+        assert argv[argv.index('model_reasoning_effort="high"') - 1] == "-c" and argv[-1].startswith(("Read", "t.md"))
+        for harness in ("claude", "agy"):
+            argv = ask.command(harness, "read", "m", tmp_path, "t.md", answer, resume=resume, reasoning="xhigh")
+            assert argv[argv.index("--effort") + 1] == "xhigh"
+    assert not any("effort" in word for harness in ask.HARNESSES
+                   for word in ask.command(harness, "read", "m", tmp_path, "t.md", answer))
+    with pytest.raises(ask.Problem, match="no reasoning level"):
+        ask.command("claude", "read", "m", tmp_path, "t.md", answer, reasoning="minimal")
+
+
+def test_a_reasoning_level_the_harness_lacks_exits_2_before_anything_is_written(tmp_path, monkeypatch):
+    monkeypatch.setattr(ask, "installed", lambda harness: None)
+    (tmp_path / "task.md").write_text("think")
+    assert ask.main(["claude", "read", str(tmp_path), "--reasoning", "minimal"]) == 2
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["task.md"]
+
+
 def test_codex_input_leaves_out_what_was_cached_or_written_to_cache():
     events = "\n".join([json.dumps({"type": "thread.started", "thread_id": "t1"}),
                         json.dumps({"type": "turn.completed", "usage": {"input_tokens": 100, "cached_input_tokens": 60,

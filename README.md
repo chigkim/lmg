@@ -37,7 +37,8 @@ lmg:
       SHA:
         FOLDER:                      # codex exec review of one commit, its answer in FOLDER
     options:
-      --model NAME:                  # default gemini-3.8-flash-medium, claude-opus-5-5 or gpt-6.1-sol
+      --model NAME:                  # default gemini-4-argon-medium, claude-opus-5-5 or gpt-6.1-sol
+      --reasoning LEVEL:             # the harness's reasoning effort, e.g. high; default its own setting
       --timeout T:                   # agy's print timeout; default 3600s
       --force:                       # run an edit job in a repository's main checkout
   usage:                             # every window in one table: percent left, spare, task cost, tasks left, resets
@@ -194,7 +195,8 @@ lmg ask review SHA FOLDER                        # codex exec review of one comm
 
 | Option | What it does |
 | --- | --- |
-| `--model NAME` | The harness's model, instead of its default: `gemini-3.8-flash-medium`, `claude-opus-5-5`, `gpt-6.1-sol`. |
+| `--model NAME` | The harness's model, instead of its default: `gemini-4-argon-medium`, `claude-opus-5-5`, `gpt-6.1-sol`. |
+| `--reasoning LEVEL` | The harness's reasoning effort, instead of its own setting, on this run (a follow-up needs it again): Codex's `model_reasoning_effort`, whose levels depend on the model, and the `--effort` of Claude and agy, `low`, `medium`, `high`, `xhigh` or `max`. A level Claude or agy does not list is refused with exit 2. `review` takes it too. |
 | `--timeout T` | agy's print timeout, `3600s` unless given. |
 | `--force` | Run an edit job in a repository's main checkout, which is refused without it. |
 

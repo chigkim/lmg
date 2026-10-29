@@ -4,6 +4,8 @@
     lmg ask review SHA FOLDER                        # codex exec review of one commit, its answer in FOLDER
 
     --model NAME   the harness's model, instead of DEFAULTS
+    --reasoning L  the harness's reasoning effort, instead of its own setting: codex's model_reasoning_effort,
+                   the --effort of claude (low|medium|high|xhigh|max) and agy (low|medium|high|xhigh|max)
     --timeout T    agy's print timeout, 3600s unless given
     --force        an edit job in a repository's main checkout, which is refused without it
 
@@ -79,6 +81,19 @@ def ask_text(harness, mode, task, answer, resume=None):
 
 
 READ_TOOLS = "Read,Grep,Glob,WebSearch,WebFetch,ToolSearch"
+# The levels claude's and agy's --effort list; codex's depend on its model, so codex is given the level as it comes.
+EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"), "agy": ("low", "medium", "high", "xhigh", "max")}
+
+
+def effort(harness, reasoning):
+    """The flags that set REASONING for HARNESS, none for no REASONING; a level the harness does not list is a Problem."""
+    if not reasoning:
+        return []
+    if reasoning not in EFFORTS.get(harness, (reasoning,)):
+        raise Problem(f"{harness} has no reasoning level {reasoning}: {'|'.join(EFFORTS[harness])}")
+    if harness == "codex":
+        return ["-c", f'model_reasoning_effort="{reasoning}"']
+    return ["--effort", reasoning]
 
 
 def flags(harness, mode):
@@ -93,19 +108,22 @@ def flags(harness, mode):
     return [] if mode == "read" else ["--dangerously-skip-permissions"]
 
 
-def command(harness, mode, model, cwd, task, answer, resume=None, timeout="3600s"):
-    """The argv that runs one job in CWD. A codex resume keeps neither sandbox nor folder, so the sandbox is set again."""
+def command(harness, mode, model, cwd, task, answer, resume=None, timeout="3600s", reasoning=None):
+    """The argv that runs one job in CWD. A codex resume keeps neither sandbox nor folder, so the sandbox is set again;
+    the reasoning level is given on every run, a follow-up's included, as none of the three keeps it."""
     ask = ask_text(harness, mode, task, answer, resume)
+    level = effort(harness, reasoning)
     if harness == "codex":
         if resume:
             again = ["-c", 'sandbox_mode="read-only"'] if mode == "read" else flags(harness, mode)
-            return ["codex", "exec", "resume", resume, "--json", "-m", model, *again, "-o", str(answer), ask]
-        return ["codex", "exec", "--json", "-m", model, *flags(harness, mode), "-C", str(cwd), "-o", str(answer), ask]
+            return ["codex", "exec", "resume", resume, "--json", "-m", model, *again, *level, "-o", str(answer), ask]
+        return ["codex", "exec", "--json", "-m", model, *flags(harness, mode), *level, "-C", str(cwd), "-o",
+                str(answer), ask]
     # The prompt goes straight after -p: --tools takes several values and would swallow a prompt that followed it.
     if harness == "claude":
         return ["claude", "-p", ask, "--output-format", "stream-json", "--verbose", "--model", model,
-                *flags(harness, mode), *(["--resume", resume] if resume else [])]
-    return ["agy", *flags(harness, mode), "--model", model, "--print-timeout", timeout, "--add-dir", str(cwd),
+                *flags(harness, mode), *level, *(["--resume", resume] if resume else [])]
+    return ["agy", *flags(harness, mode), "--model", model, *level, "--print-timeout", timeout, "--add-dir", str(cwd),
             "--output-format", "stream-json", *(["--conversation", resume] if resume else []), "-p", ask]
 
 
@@ -416,10 +434,11 @@ def folder_of(folder):
     return folder
 
 
-def job(harness, mode, folder, resume, model, timeout, force=False):
+def job(harness, mode, folder, resume, model, timeout, force=False, reasoning=None):
     folder = folder_of(folder)
     task = task_of(folder)
     installed(harness)
+    effort(harness, reasoning)
     cwd = workplace(folder)
     if mode == "edit" and not force and main_checkout(cwd):
         raise Problem(f"{cwd} is a repository's main checkout, whose files an edit job would change: make a worktree"
@@ -432,8 +451,8 @@ def job(harness, mode, folder, resume, model, timeout, force=False):
     copy = folder / f"task{n}.md"
     copy.write_bytes(task.read_bytes())
     answer, raw, log = (folder / f"response{n}.{kind}" for kind in ("md", "jsonl", "log"))
-    print(f"{harness} {mode}, {model}, in {cwd}", flush=True)
-    argv = command(harness, mode, model, cwd, copy, answer, resume, timeout)
+    print(f"{harness} {mode}, {model}" + (f", reasoning {reasoning}" if reasoning else "") + f", in {cwd}", flush=True)
+    argv = command(harness, mode, model, cwd, copy, answer, resume, timeout, reasoning)
     lines = []
     if harness == "codex":
         status = run(argv, cwd, raw, log)
@@ -462,7 +481,7 @@ def job(harness, mode, folder, resume, model, timeout, force=False):
     return status, note
 
 
-def review(sha, folder, model):
+def review(sha, folder, model, reasoning=None):
     folder = folder_of(folder)
     repo = toplevel(folder)
     found = git("rev-parse", "-q", "--verify", f"{sha}^{{commit}}", cwd=repo)
@@ -477,7 +496,7 @@ def review(sha, folder, model):
     n = claimed(folder)
     answer, raw, log = (folder / f"response{n}.{kind}" for kind in ("md", "jsonl", "log"))
     started = time.time()
-    status = run(["codex", "exec", "-m", model, "-s", "read-only", "-o", str(answer), "review",
+    status = run(["codex", "exec", "-m", model, "-s", "read-only", *effort("codex", reasoning), "-o", str(answer), "review",
                   "--json", "--commit", sha], repo, raw, log)
     thread, _ = read_codex(raw.read_text(encoding="utf-8", errors="replace"))
     print(f"session id: {thread}")
@@ -514,6 +533,7 @@ def parse(argv):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("words", nargs="+", help="agy|claude|codex read|edit FOLDER [ID], or review SHA FOLDER")
     parser.add_argument("--model", help="the harness's model instead of its default")
+    parser.add_argument("--reasoning", help="the harness's reasoning effort instead of its own setting, such as high")
     parser.add_argument("--timeout", default="3600s", help="agy's print timeout (default 3600s)")
     parser.add_argument("--force", action="store_true", help="run an edit job in a repository's main checkout")
     return parser.parse_args(argv)
@@ -531,11 +551,11 @@ def main(argv, command_line=False):
             if len(words) not in (3, 4) or words[1] not in ("read", "edit"):
                 raise Problem(f"lmg ask {what} read|edit FOLDER [ID]")
             status, note = job(what, words[1], words[2], words[3] if len(words) == 4 else None,
-                               args.model or DEFAULTS[what], args.timeout, args.force)
+                               args.model or DEFAULTS[what], args.timeout, args.force, args.reasoning)
         elif what == "review":
             if len(words) != 3:
                 raise Problem("lmg ask review SHA FOLDER")
-            status, note = review(words[1], words[2], args.model or DEFAULTS["codex"])
+            status, note = review(words[1], words[2], args.model or DEFAULTS["codex"], args.reasoning)
         else:
             raise Problem(f"unknown {what}: agy, claude, codex or review")
     except Problem as problem:
