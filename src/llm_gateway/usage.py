@@ -134,6 +134,8 @@ def line(label, used, resets, indent="  "):
 
 
 CREDENTIALS = pathlib.Path.home() / ".claude" / ".credentials.json"
+# On macOS the CLI keeps its login in the keychain and refreshes it there, so the file can be days stale.
+KEYCHAIN = "Claude Code-credentials"
 USAGE = "https://api.anthropic.com/api/oauth/usage"
 
 
@@ -148,6 +150,32 @@ class Unredirected(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(Unredirected)
 
 
+def _keychain():
+    """The login the macOS keychain holds, as JSON text, or None where there is no keychain or no entry. A failed
+    or timed-out read is dropped whole, since its exception would carry whatever it had printed."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        found = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN, "-w"],
+                               capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return found.stdout if found.returncode == 0 else None
+
+
+def _login():
+    """The CLI's login that expires last, of the keychain's and the credentials file's."""
+    logins = []
+    for read in (_keychain, lambda: CREDENTIALS.read_text(encoding="utf-8")):
+        try:
+            logins.append(json.loads(read())["claudeAiOauth"])
+        except (OSError, LookupError, ValueError, TypeError):
+            pass
+    if not logins:
+        raise LookupError("no login")
+    return max(logins, key=lambda login: login["expiresAt"])
+
+
 def claude():
     """Claude's limits from the endpoint `/usage` reads, which is free;
     the Haiku call is kept for when that request cannot be made or fails.
@@ -157,8 +185,7 @@ def claude():
     it: a failure is answered with its status code alone.
     """
     try:
-        login = json.loads(CREDENTIALS.read_text(encoding="utf-8"))
-        login = login["claudeAiOauth"]
+        login = _login()
         if login["expiresAt"] / 1000 <= time.time():
             raise LookupError("expired")
         request = urllib.request.Request(USAGE, headers={

@@ -39,9 +39,35 @@ def test_endpoint_reads_current_limits_without_a_model_call(tmp_path, monkeypatc
     path = tmp_path / "credentials.json"
     path.write_text(json.dumps({"claudeAiOauth": {"accessToken": "secret", "expiresAt": 4102444800000}}))
     monkeypatch.setattr(usage, "CREDENTIALS", path)
+    monkeypatch.setattr(usage, "_keychain", lambda: None)
     monkeypatch.setattr(usage.OPENER, "open", lambda *a, **k: io.BytesIO(json.dumps(limits()).encode()))
     monkeypatch.setattr(usage, "_claude_by_call", lambda: (_ for _ in ()).throw(AssertionError("model call")))
     assert [window.kind for window in usage.claude()] == ["5h", "week_fable"]
+
+
+def test_fresh_keychain_login_beats_a_stale_credentials_file(tmp_path, monkeypatch):
+    path = tmp_path / "credentials.json"
+    path.write_text(json.dumps({"claudeAiOauth": {"accessToken": "stale", "expiresAt": 1000}}))
+    monkeypatch.setattr(usage, "CREDENTIALS", path)
+    monkeypatch.setattr(usage, "_keychain", lambda: json.dumps(
+        {"claudeAiOauth": {"accessToken": "fresh", "expiresAt": 4102444800000}}))
+    sent = []
+
+    def opened(request, **_):
+        sent.append(request.get_header("Authorization"))
+        return io.BytesIO(json.dumps(limits()).encode())
+
+    monkeypatch.setattr(usage.OPENER, "open", opened)
+    monkeypatch.setattr(usage, "_claude_by_call", lambda: (_ for _ in ()).throw(AssertionError("model call")))
+    assert [window.kind for window in usage.claude()] == ["5h", "week_fable"]
+    assert sent == ["Bearer fresh"]
+
+
+def test_no_login_anywhere_falls_back_to_the_call(tmp_path, monkeypatch):
+    monkeypatch.setattr(usage, "CREDENTIALS", tmp_path / "missing.json")
+    monkeypatch.setattr(usage, "_keychain", lambda: None)
+    monkeypatch.setattr(usage, "_claude_by_call", lambda: ["called"])
+    assert usage.claude() == ["called"]
 
 
 def test_record_extends_old_ledger_and_preserves_rows(tmp_path, monkeypatch):
