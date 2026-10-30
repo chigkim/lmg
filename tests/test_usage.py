@@ -85,6 +85,34 @@ def test_an_agy_limit_logged_without_a_fraction_is_used_up(monkeypatch):
     assert (five.left, week.left) == (0, 25)
 
 
+def test_agy_argon_weekly_limit_is_its_own_window_shown_and_recorded(monkeypatch, tmp_path):
+    # The groups as agy 1.4.10 logs them: Argon's one limit is named for the model, not `... Limit Remaining`.
+    log = ['"displayName": "Weekly Limit Remaining"', '"resetTime": "2099-01-02T00:00:00Z"',
+           '"remainingFraction": 1', '"displayName": "Gemini Models"',
+           '"displayName": "Weekly Limit Remaining"', '"resetTime": "2099-01-02T00:00:00Z"',
+           '"remainingFraction": 1', '"displayName": "Claude and GPT models"',
+           '"displayName": "Gemini 4 Argon Weekly Limit"', '"resetTime": "2099-01-03T00:00:00Z"',
+           '"remainingFraction": 0.375', '"displayName": "Gemini 4 Argon"',
+           '"displayName": "Gemini 4 Argon (Medium)"']
+
+    def agy(argv, timeout, cwd):
+        open(argv[argv.index("--log-file") + 1], "w", encoding="utf-8").write(chr(10).join(log))
+        return 0, ""
+    monkeypatch.setattr(usage, "cli", lambda name: name)
+    monkeypatch.setattr(usage, "ran", agy)
+    report = ["Now", "agy"] + usage.agy()
+    assert {key: window.left for key, window in usage.windows(report).items()} == {
+        "agy_week": 100, "agy_week_argon": 38}
+    # Argon's row sits under Gemini's, though the log has Claude and GPT between them.
+    assert [line.split("|")[1].strip() for line in usage.shown(report)[4:]] == [
+        "agy Gemini week", "agy Argon week", "agy Claude and GPT week"]
+    monkeypatch.setattr(usage, "LEDGER", tmp_path / "usage-ledger.csv")
+    usage.record("before: agy x", report)
+    with usage.LEDGER.open(encoding="utf-8") as book:
+        row = next(csv.DictReader(book))
+    assert (row["agy_week_left"], row["agy_week_argon_left"]) == ("100", "38")
+
+
 def test_a_claude_window_this_does_not_name_is_left_out_not_read_as_a_group(monkeypatch):
     event = {"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {
         "seven_day_opus": {"utilization": 0.5, "resetsAt": 4102444800},

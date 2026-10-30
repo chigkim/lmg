@@ -100,7 +100,8 @@ ROUGH_NOTE = f"a cost from fewer than {ROUGH} tasks, so a first guess"
 # How lmg usage names each ledger window, so lmg usage tasks can name them the same.
 LABELS = {"claude_5h": "Claude 5h", "claude_week": "Claude week",
           "claude_week_fable": "Claude Fable week", "codex_5h": "Codex 5h",
-          "codex_week": "Codex week", "agy_5h": "agy Gemini 5h", "agy_week": "agy Gemini week"}
+          "codex_week": "Codex week", "agy_5h": "agy Gemini 5h", "agy_week": "agy Gemini week",
+          "agy_week_argon": "agy Argon week"}
 
 WEEK = 7 * 24 * 3600
 FIVE_HOURS = 5 * 3600
@@ -111,7 +112,7 @@ class Window(str):
 
 
 class Group(str):
-    """The line naming one of a plan's model groups, as agy has two, above that group's windows."""
+    """The line naming one of a plan's model groups, as agy has three, above that group's windows."""
 
 
 def line(label, used, resets, indent="  "):
@@ -317,7 +318,8 @@ def agy():
     Listing models runs no model, so this one costs nothing. At `-v=3` the
     log carries each model group's limits: a run of `... Limit Remaining`
     entries, each with its fraction and reset, closed by the group's own
-    `displayName`.
+    `displayName`. A limit of one model, as `Gemini 4 Argon Weekly Limit`,
+    is a window of its own, `week_argon`, as Claude's Fable week is.
     """
     # `agy models` can exit before its quota request is answered, which
     # leaves the log without it; asking costs nothing, so ask again.
@@ -341,7 +343,7 @@ def agy():
     # group replaces the earlier one.
     groups, limits, current = {}, [], {}
     for name, value in field.findall(text):
-        if name == "displayName" and value.endswith("Limit Remaining"):
+        if name == "displayName" and value.endswith(("Limit Remaining", "Weekly Limit")):
             current = {"label": value}
             limits.append(current)
         elif name == "displayName" and limits:
@@ -354,10 +356,16 @@ def agy():
                 # as protobuf leaves out a zero, so a limit with a reset and
                 # no fraction is one used up.
                 limit.setdefault("fraction", 0.0)
+                model = value.split()[-1]
+                scoped = not limit["label"].endswith("Limit Remaining")
                 label = ("5h limit:" if limit["label"].startswith("Five")
+                         else f"Weekly {model} limit:" if scoped
                          else "Weekly limit:")
-                readings.append(line(label, 100 - limit["fraction"] * 100,
-                                  limit["reset"], indent="    "))
+                window = line(label, 100 - limit["fraction"] * 100,
+                              limit["reset"], indent="    ")
+                if scoped:
+                    window.kind = f"week_{model.lower()}"
+                readings.append(window)
             groups[value] = readings
             limits, current = [], {}
         elif name == "remainingFraction" and current:
@@ -366,7 +374,8 @@ def agy():
             current["reset"] = datetime.fromisoformat(
                 value.replace("Z", "+00:00")).timestamp()
     out = []
-    for group, readings in groups.items():
+    # The Gemini groups first, in the log's order, so Argon's sits under Gemini's rather than after Claude and GPT.
+    for group, readings in sorted(groups.items(), key=lambda item: "Gemini" not in item[0]):
         out += [Group(f"  {group}")] + readings
     return out or ["  no quota in the agy log"]
 
@@ -377,7 +386,7 @@ STAMP = "%Y-%m-%d %H:%M:%S"
 # Each window's percent left and its reset, `YYYY-MM-DD HH:MM`; a blank is
 # a window that gave no reading.
 WINDOWS = [f"{plan}_{kind}" for plan in ("claude", "codex", "agy")
-           for kind in ("5h", "week")] + ["claude_week_fable"]
+           for kind in ("5h", "week")] + ["claude_week_fable", "agy_week_argon"]
 FIELDS = ["time", "note"] + [f"{window}_{part}" for window in WINDOWS
                              for part in ("left", "reset")]
 
@@ -432,6 +441,9 @@ def record(note, report):
     """Append one row to the ledger: the report's readings under a note."""
     row = {"time": datetime.now().strftime(STAMP), "note": note}
     for key, window in windows(report).items():
+        # A window the ledger has no column for, as a new model's own limit, is shown but not recorded.
+        if key not in WINDOWS:
+            continue
         row[f"{key}_left"] = window.left
         row[f"{key}_reset"] = datetime.fromtimestamp(
             window.resets).strftime("%Y-%m-%d %H:%M")
@@ -566,7 +578,7 @@ def windows(report):
 
 
 def _sections(report):
-    """(provider, its limit lines), skipping agy's non-Gemini group."""
+    """(provider, its limit lines), skipping agy's non-Gemini group; Argon's is kept, being Gemini 4 Argon."""
     name, lines, skip = None, [], False
     for row in report:
         if not row.startswith(" "):

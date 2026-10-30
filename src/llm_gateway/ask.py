@@ -46,7 +46,7 @@ from . import calls, usage
 from .home import HOME
 
 HARNESSES = ("agy", "claude", "codex")
-DEFAULTS = {"agy": "gemini-4-argon-medium", "claude": "claude-opus-5-5", "codex": "gpt-6.1-sol"}
+DEFAULTS = {"agy": "gemini-4-argon-medium", "claude": "opus", "codex": "gpt-6.1-sol"}
 TOKENS = HOME / "token-ledger.csv"
 TOKEN_FIELDS = ["time", "note", "repo", "model", "input", "cache_read", "cache_write", "cache_write_1h", "output", "usd"]
 
