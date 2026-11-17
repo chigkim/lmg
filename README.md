@@ -30,7 +30,7 @@ lmg:
       --config PATH:                 # default ~/.lmg/config.toml
   ask:                               # a job in a folder of your own
     models:                          # every HARNESS/MODEL the harnesses list now
-    agy|claude|codex[/MODEL]:        # MODEL defaults to gemini-4-argon-medium, opus or gpt-6.1-sol
+    agy|claude|codex[/MODEL]:        # MODEL defaults to gemini-4-hydrogen-medium, opus or gpt-6.1-sol
       read|edit:
         FOLDER:                      # holds task.md; the job is named after it, and its answers go in it
           ID:                        # optional: follow up that session
@@ -194,7 +194,7 @@ lmg ask [codex[/MODEL]] review SHA FOLDER        # codex exec review of one comm
 lmg ask models                                   # every HARNESS/MODEL the three harnesses list now
 ```
 
-`HARNESS` is `agy`, `claude` or `codex`. `MODEL` is the harness's model, such as `claude/sonnet` or `agy/gemini-4-hydrogen-high`; without one, the harness runs its default: `gemini-4-argon-medium`, `opus` or `gpt-6.1-sol`. `lmg ask models` prints one `HARNESS/MODEL` a line: the first column of `agy models`, and the same Claude and Codex lists as `lmg proxy models`, asked now. It exits 1 if a harness could not answer, with the rest still printed, and 3 if none did. A name the harness accepts works whether it is listed or not. The follow-up command a job prints names the model it ran, so a follow-up keeps it.
+`HARNESS` is `agy`, `claude` or `codex`. `MODEL` is the harness's model, such as `claude/sonnet` or `agy/gemini-4-hydrogen-high`; without one, the harness runs its default: `gemini-4-hydrogen-medium`, `opus` or `gpt-6.1-sol`. `lmg ask models` prints one `HARNESS/MODEL` a line: the first column of `agy models`, and the same Claude and Codex lists as `lmg proxy models`, asked now. It exits 1 if a harness could not answer, with the rest still printed, and 3 if none did. A name the harness accepts works whether it is listed or not. The follow-up command a job prints names the model it ran, so a follow-up keeps it.
 
 | Option | What it does |
 | --- | --- |
