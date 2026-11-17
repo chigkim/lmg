@@ -15,11 +15,11 @@ lmg ask models                                   # every HARNESS/MODEL the harne
 
 HARNESS is `agy`, `claude` or `codex`. Name a model after it, such as `lmg ask claude/sonnet read FOLDER` or `lmg ask agy/gemini-4-hydrogen-high read FOLDER`. Without one, the harness runs its default model, and `review` uses Codex's. There is no `--model` option.
 
-Options: `--reasoning LEVEL` (the harness's reasoning effort for this run, such as `high`; give it again on a follow-up; Claude and agy take `low|medium|high|xhigh|max`), `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
+Options: `--reasoning LEVEL` (the harness's reasoning effort for this run, such as `high`; give it again on a follow-up; Claude and agy take `low|medium|high|xhigh|max`; without it, each harness uses its own setting: Codex's `model_reasoning_effort` in `~/.codex/config.toml`, Claude's `effortLevel` in `~/.claude/settings.json`, and for agy the level in the model name, such as `-medium`, which is the clearer way to set agy's), `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
 
 `lmg ask models` prints every `HARNESS/MODEL` the three harnesses list now. Exit 1 means one harness could not answer, and the rest are still printed.
 
-The `lmg` on PATH is an installed copy. After changing the checkout, reinstall it from there (`uv tool install --reinstall .`), or it keeps the old defaults and prices.
+The `lmg` on PATH is installed from GitHub, not from the checkout. After pushing a change, reinstall it with `uv tool install --reinstall "llm-gateway @ git+https://github.com/chigkim/lmg"`, or it keeps the old defaults and prices. Do not reinstall while the gateway serves your own session.
 
 ## Setting up the folder
 
