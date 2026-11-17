@@ -14,6 +14,7 @@ def call(model, input=0, output=0, time=0.0, name="codex"):
 def test_a_plan_name_is_priced_as_its_api_model():
     assert calls.base("claude-opus-5-5[1m]") == "claude-opus-5-5"
     assert calls.base("gemini-3.8-flash-medium") == "gemini-3.8-flash"
+    assert calls.base("gemini-4-hydrogen-xhigh") == "gemini-4-hydrogen"
 
 
 def test_a_long_prompt_is_priced_at_the_long_context_rate():

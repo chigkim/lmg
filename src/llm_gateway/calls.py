@@ -41,7 +41,9 @@ HOME = pathlib.Path.home()
 PRICES = pathlib.Path(__file__).with_name("prices.csv")
 PLANS = ("claude", "codex", "agy")
 # agy stores its model as a number. Each was matched to the one model name found in the conversation files that used only it.
-AGY_MODELS = {1417: "gemini-4-argon-high", 1418: "gemini-4-argon-medium", 1419: "gemini-4-argon-low",
+AGY_MODELS = {1525: "gemini-4-hydrogen-high", 1526: "gemini-4-hydrogen-medium", 1527: "gemini-4-hydrogen-low",
+              1528: "gemini-4-hydrogen-xhigh",
+              1417: "gemini-4-argon-high", 1418: "gemini-4-argon-medium", 1419: "gemini-4-argon-low",
               1318: "gemini-3.8-flash-high", 1319: "gemini-3.8-flash-medium", 1320: "gemini-3.8-flash-low",
               1298: "gemini-3.7-flash-high", 1020: "gemini-3.5-flash-low",
               1403: "claude-sonnet-5-5-low", 1035: "claude-sonnet-4-6", 342: "gpt-oss-120b-medium"}
@@ -333,7 +335,7 @@ def prices():
 
 def base(model):
     """The API model a plan's name is priced as: less Claude Code's context suffix and agy's thinking level."""
-    return re.sub(r"-(low|medium|high)$", "", model.split("[")[0])
+    return re.sub(r"-(low|medium|x?high)$", "", model.split("[")[0])
 
 
 # OpenAI: a prompt over 272K input tokens is priced at 2x input and cache rates and 1.5x output for the whole request, on
