@@ -1,9 +1,11 @@
 """Hand one job to agy, Claude Code or Codex, in a folder of your own, with a usage reading either side.
 
-    lmg ask agy|claude|codex read|edit FOLDER [ID]   # FOLDER/task.md as a job, or a follow-up to the one ID names
-    lmg ask review SHA FOLDER                        # codex exec review of one commit, its answer in FOLDER
+    lmg ask HARNESS[/MODEL] read|edit FOLDER [ID]    # FOLDER/task.md as a job, or a follow-up to the one ID names
+    lmg ask [codex[/MODEL]] review SHA FOLDER        # codex exec review of one commit, its answer in FOLDER
+    lmg ask models                                   # every HARNESS/MODEL the three harnesses list now
 
-    --model NAME   the harness's model, instead of DEFAULTS
+HARNESS is agy, claude or codex, and MODEL the harness's model, DEFAULTS's unless given, as in claude/sonnet.
+
     --reasoning L  the harness's reasoning effort, instead of its own setting: codex's model_reasoning_effort,
                    the --effort of claude (low|medium|high|xhigh|max) and agy (low|medium|high|xhigh|max)
     --timeout T    agy's print timeout, 3600s unless given
@@ -434,6 +436,60 @@ def folder_of(folder):
     return folder
 
 
+def agy_models():
+    """The names agy's --model takes: the first column of `agy models`, which says what it is doing first."""
+    status, out = usage.ran([usage.cli("agy"), "models"], 120, HOME)
+    names = [line.split("\t")[0].strip() for line in out.splitlines() if "\t" in line]
+    if status or not names:
+        raise RuntimeError(f"agy models exited {status} with {len(names)} models")
+    return names
+
+
+# The gateway's provider whose lister asks claude's and codex's models of the harness, as `lmg proxy models` does.
+LISTERS = {"claude": "anthropic", "codex": "openai"}
+
+
+def listed():
+    """HARNESS -> its model names, or the exception that kept it from listing them; the three are asked at once."""
+    import asyncio
+
+    import aiohttp
+
+    from . import gateway
+
+    async def asked():
+        os.makedirs(gateway.WORKDIR, exist_ok=True)
+        async with aiohttp.ClientSession() as gateway.HTTP:
+            return await asyncio.gather(asyncio.to_thread(agy_models),
+                                        *(gateway.LISTERS[p]() for p in LISTERS.values()), return_exceptions=True)
+    return dict(zip(("agy", *LISTERS), asyncio.run(asked())))
+
+
+def models(found=None):
+    """Print every HARNESS/MODEL, one a line. Exit 0 when each harness answered, 1 when one could not (the rest are
+    still printed), 3 when none did."""
+    found = listed() if found is None else found
+    failed = 0
+    for harness, names in found.items():
+        if isinstance(names, BaseException):
+            print(f"{harness}: {type(names).__name__}: {names}", file=sys.stderr)
+            failed += 1
+            continue
+        for name in names:
+            print(f"{harness}/{name}")
+    return 3 if failed == len(found) else int(bool(failed))
+
+
+def named(word):
+    """HARNESS[/MODEL] -> (harness, model), the harness's default model unless one is given."""
+    harness, slash, model = word.partition("/")
+    if harness not in HARNESSES:
+        raise Problem(f"unknown {harness}: agy, claude, codex, review or models")
+    if slash and not model:
+        raise Problem(f"no model after {harness}/: lmg ask models lists them")
+    return harness, model or DEFAULTS[harness]
+
+
 def job(harness, mode, folder, resume, model, timeout, force=False, reasoning=None):
     folder = folder_of(folder)
     task = task_of(folder)
@@ -476,7 +532,7 @@ def job(harness, mode, folder, resume, model, timeout, force=False, reasoning=No
         lines.append(booked(note, cwd.name, model, spent))
     lines.append(f"answer: {answer}")
     if sid:
-        lines.append(f"follow up: edit {task.name}, then lmg ask {harness} read|edit {folder} {sid}")
+        lines.append(f"follow up: edit {task.name}, then lmg ask {harness}/{model} read|edit {folder} {sid}")
     print("\n".join(lines), flush=True)
     return status, note
 
@@ -532,8 +588,12 @@ def child_usage(thread, since, sessions=None):
 GUIDE = """\
 lmg ask: hand one job to agy, Claude Code or Codex.
 
-  lmg ask agy|claude|codex read|edit FOLDER [ID]
-  lmg ask review SHA FOLDER
+  lmg ask HARNESS[/MODEL] read|edit FOLDER [ID]
+  lmg ask [codex[/MODEL]] review SHA FOLDER
+  lmg ask models
+
+HARNESS is agy, claude or codex. MODEL is the harness's model, its default unless given, as in claude/sonnet or
+agy/gemini-4-hydrogen-high. `lmg ask models` lists every HARNESS/MODEL the harnesses offer now.
 
 1. Make a folder and write the whole job in FOLDER/task.md. The agent sees only that file and the repository, not
    your conversation.
@@ -545,7 +605,6 @@ read   read and search only; Claude and Codex can also search the web. For resea
 edit   no sandbox: it writes files and runs commands. Put FOLDER in a worktree you made; a job in a repository's
        main checkout is refused unless --force.
 
---model NAME runs another model than the harness's default.
 Exit 2: the job never started. 124: agy timed out and the answer is partial. 1: the agent stopped without a full
 answer. `lmg ask --help` has the details."""
 
@@ -553,8 +612,8 @@ answer. `lmg ask --help` has the details."""
 def parse(argv):
     parser = argparse.ArgumentParser(prog="lmg ask", description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("words", nargs="*", help="agy|claude|codex read|edit FOLDER [ID], or review SHA FOLDER")
-    parser.add_argument("--model", help="the harness's model instead of its default")
+    parser.add_argument("words", nargs="*", help="HARNESS[/MODEL] read|edit FOLDER [ID], [codex[/MODEL]] review"
+                                                 " SHA FOLDER, or models")
     parser.add_argument("--reasoning", help="the harness's reasoning effort instead of its own setting, such as high")
     parser.add_argument("--timeout", default="3600s", help="agy's print timeout (default 3600s)")
     parser.add_argument("--force", action="store_true", help="run an edit job in a repository's main checkout")
@@ -568,21 +627,23 @@ def main(argv, command_line=False):
     if not words:
         print(GUIDE)
         return 0
+    if words == ["models"]:
+        return models()
     if command_line:
         bound()
     try:
-        what = words[0]
-        if what in HARNESSES:
-            if len(words) not in (3, 4) or words[1] not in ("read", "edit"):
-                raise Problem(f"lmg ask {what} read|edit FOLDER [ID]")
-            status, note = job(what, words[1], words[2], words[3] if len(words) == 4 else None,
-                               args.model or DEFAULTS[what], args.timeout, args.force, args.reasoning)
-        elif what == "review":
-            if len(words) != 3:
-                raise Problem("lmg ask review SHA FOLDER")
-            status, note = review(words[1], words[2], args.model or DEFAULTS["codex"], args.reasoning)
+        if words[0] == "review":
+            words = ["codex", *words]
+        harness, model = named(words[0])
+        if len(words) > 1 and words[1] == "review":
+            if harness != "codex" or len(words) != 4:
+                raise Problem("lmg ask [codex[/MODEL]] review SHA FOLDER")
+            status, note = review(words[2], words[3], model, args.reasoning)
+        elif len(words) in (3, 4) and words[1] in ("read", "edit"):
+            status, note = job(harness, words[1], words[2], words[3] if len(words) == 4 else None, model,
+                               args.timeout, args.force, args.reasoning)
         else:
-            raise Problem(f"unknown {what}: agy, claude, codex or review")
+            raise Problem(f"lmg ask {words[0]} read|edit FOLDER [ID]")
     except Problem as problem:
         print(problem, file=sys.stderr)
         return 2

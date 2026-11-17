@@ -256,6 +256,39 @@ def test_lmg_ask_alone_prints_the_guide(capsys):
     assert "task.md" in capsys.readouterr().out
 
 
+def test_a_model_is_named_after_its_harness(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(ask, "job", lambda *a: seen.append(("job", a[0], a[4])) or (0, "n"))
+    monkeypatch.setattr(ask, "review", lambda sha, folder, model, reasoning: seen.append(("review", model)) or (0, "n"))
+    monkeypatch.setattr(ask, "reading", lambda stage, note: [])
+    monkeypatch.setattr(ask.usage, "shown", lambda *a: [])
+    monkeypatch.setattr(ask.usage, "costed", lambda *a: None)
+    for words in (["claude/sonnet", "read", "f"], ["agy", "edit", "f", "c1"], ["codex/gpt-x", "review", "HEAD", "f"],
+                  ["review", "HEAD", "f"]):
+        assert ask.main(words) == 0
+    assert seen == [("job", "claude", "sonnet"), ("job", "agy", ask.DEFAULTS["agy"]), ("review", "gpt-x"),
+                    ("review", ask.DEFAULTS["codex"])]
+    for words in (["claude/", "read", "f"], ["gemini/x", "read", "f"], ["claude", "review", "HEAD", "f"]):
+        assert ask.main(words) == 2
+    with pytest.raises(SystemExit):
+        ask.main(["claude", "read", "f", "--model", "opus"])
+
+
+def test_models_are_listed_as_harness_slash_name_and_one_harness_failing_is_exit_1(capsys):
+    assert ask.models({"agy": ["g-low"], "claude": ["opus", "claude-opus-5-5"], "codex": RuntimeError("no login")}) == 1
+    out = capsys.readouterr()
+    assert out.out.splitlines() == ["agy/g-low", "claude/opus", "claude/claude-opus-5-5"]
+    assert "codex: RuntimeError: no login" in out.err
+    assert ask.models({"agy": OSError(), "claude": OSError(), "codex": OSError()}) == 3
+
+
+def test_agy_models_are_its_first_column(monkeypatch):
+    monkeypatch.setattr(ask.usage, "cli", lambda name: name)
+    monkeypatch.setattr(ask.usage, "ran", lambda argv, timeout, cwd: (
+        0, "Fetching available models...\ngemini-4-hydrogen-high\tGemini 4 Hydrogen (High)\nclaude-opus-5-5-low\tX\n"))
+    assert ask.agy_models() == ["gemini-4-hydrogen-high", "claude-opus-5-5-low"]
+
+
 def test_usage_mistakes_exit_2_without_running_anything(tmp_path, capsys):
     assert ask.main(["codex", "write", str(tmp_path)]) == 2
     assert ask.main(["nope"]) == 2

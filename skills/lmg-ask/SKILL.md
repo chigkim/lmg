@@ -8,13 +8,16 @@ description: Hand a job (research, review, code change) to agy, Claude Code or C
 Use `lmg ask` to give one job to another agent. A job is a folder that holds a `task.md`. The answers are saved in the same folder.
 
 ```
-lmg ask agy|claude|codex read|edit FOLDER [ID]   # FOLDER/task.md as a new job, or a follow-up to the job ID names
-lmg ask review SHA FOLDER                        # Codex review of one commit, its answer in FOLDER
+lmg ask HARNESS[/MODEL] read|edit FOLDER [ID]    # FOLDER/task.md as a new job, or a follow-up to the job ID names
+lmg ask [codex[/MODEL]] review SHA FOLDER        # Codex review of one commit, its answer in FOLDER
+lmg ask models                                   # every HARNESS/MODEL the harnesses offer
 ```
 
-Options: `--model NAME`, `--reasoning LEVEL` (the harness's reasoning effort for this run, such as `high`; give it again on a follow-up; Claude and agy take `low|medium|high|xhigh|max`), `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
+HARNESS is `agy`, `claude` or `codex`. Name a model after it, such as `lmg ask claude/sonnet read FOLDER` or `lmg ask agy/gemini-4-hydrogen-high read FOLDER`. Without one, the harness runs its default model, and `review` uses Codex's. There is no `--model` option.
 
-Each harness has a default model, and `review` uses Codex's. `agy models` lists the names agy accepts for `--model`.
+Options: `--reasoning LEVEL` (the harness's reasoning effort for this run, such as `high`; give it again on a follow-up; Claude and agy take `low|medium|high|xhigh|max`), `--timeout T` (agy only, default 3600s), `--force` (allow an edit job in a repository's main checkout).
+
+`lmg ask models` prints every `HARNESS/MODEL` the three harnesses list now. Exit 1 means one harness could not answer, and the rest are still printed.
 
 The `lmg` on PATH is an installed copy. After changing the checkout, reinstall it from there (`uv tool install --reinstall .`), or it keeps the old defaults and prices.
 

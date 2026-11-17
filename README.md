@@ -5,7 +5,7 @@ One command, `lmg`, for three jobs: a small LLM gateway on loopback, jobs handed
 | Command | What it does |
 | --- | --- |
 | `lmg proxy [run\|start\|stop\|restart\|status\|models]` | The gateway. It speaks OpenAI's Responses and Chat Completions APIs, and answers them from a Claude or ChatGPT subscription instead of an API key. |
-| `lmg ask HARNESS MODE FOLDER [ID]` | Runs the job in `FOLDER/task.md`, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask review SHA FOLDER` is its other form. |
+| `lmg ask HARNESS[/MODEL] MODE FOLDER [ID]` | Runs the job in `FOLDER/task.md`, or follows up the one `ID` names, with a usage reading either side, and prints the `lmg usage` table when it ends. `lmg ask [codex[/MODEL]] review SHA FOLDER` is its other form, and `lmg ask models` lists every `HARNESS/MODEL`. |
 | `lmg usage [NOTE]` | One table of every plan's 5-hour and weekly windows, agy's three model groups each on their own rows: percent left, the spare against an even pace (+ ahead, - behind), what one task of its harness costs it on average, how many more tasks that leaves, and when each resets. With a note, `word: what` such as `"before: pi x"`, it also adds a row to the ledger, which keeps agy's Gemini and Gemini 4 Argon groups only. Any other word is refused, so a mistyped form writes nothing. `lmg usage --help` lists every form, and each form takes `--help` too. |
 | `lmg usage calls [--hours N \| --since "YYYY-MM-DD HH:MM"]` | Every call each plan was spent on, read from the clients' own records, grouped by who made it (`claude code`, `claude -p` and `pi bridge` for Claude; `codex` and `codex exec` for Codex), with tokens and what they would cost on the public API. |
 | `lmg usage tasks` | Every task in the ledger with what it took from each window, then what a task costs each window and how many tasks that is measured from. A cost from fewer than five tasks is marked `~`, here and in `lmg usage`. |
@@ -29,15 +29,15 @@ lmg:
       --port N:                      # default 8797
       --config PATH:                 # default ~/.lmg/config.toml
   ask:                               # a job in a folder of your own
-    agy|claude|codex:
+    models:                          # every HARNESS/MODEL the harnesses list now
+    agy|claude|codex[/MODEL]:        # MODEL defaults to gemini-4-argon-medium, opus or gpt-6.1-sol
       read|edit:
         FOLDER:                      # holds task.md; the job is named after it, and its answers go in it
           ID:                        # optional: follow up that session
-    review:
-      SHA:
-        FOLDER:                      # codex exec review of one commit, its answer in FOLDER
+      review:                        # codex[/MODEL] only; `review` alone is codex's default model
+        SHA:
+          FOLDER:                    # codex exec review of one commit, its answer in FOLDER
     options:
-      --model NAME:                  # default gemini-4-argon-medium, claude-opus-5-5 or gpt-6.1-sol
       --reasoning LEVEL:             # the harness's reasoning effort, e.g. high; default its own setting
       --timeout T:                   # agy's print timeout; default 3600s
       --force:                       # run an edit job in a repository's main checkout
@@ -189,13 +189,15 @@ It checks a client-run tool round trip, a follow-up and streaming on both APIs, 
 ## Jobs
 
 ```bash
-lmg ask agy|claude|codex read|edit FOLDER [ID]   # FOLDER/task.md as a job, or a follow-up to the one ID names
-lmg ask review SHA FOLDER                        # codex exec review of one commit, its answer in FOLDER
+lmg ask HARNESS[/MODEL] read|edit FOLDER [ID]    # FOLDER/task.md as a job, or a follow-up to the one ID names
+lmg ask [codex[/MODEL]] review SHA FOLDER        # codex exec review of one commit, its answer in FOLDER
+lmg ask models                                   # every HARNESS/MODEL the three harnesses list now
 ```
+
+`HARNESS` is `agy`, `claude` or `codex`. `MODEL` is the harness's model, such as `claude/sonnet` or `agy/gemini-4-hydrogen-high`; without one, the harness runs its default: `gemini-4-argon-medium`, `opus` or `gpt-6.1-sol`. `lmg ask models` prints one `HARNESS/MODEL` a line: the first column of `agy models`, and the same Claude and Codex lists as `lmg proxy models`, asked now. It exits 1 if a harness could not answer, with the rest still printed, and 3 if none did. A name the harness accepts works whether it is listed or not. The follow-up command a job prints names the model it ran, so a follow-up keeps it.
 
 | Option | What it does |
 | --- | --- |
-| `--model NAME` | The harness's model, instead of its default: `gemini-4-argon-medium`, `claude-opus-5-5`, `gpt-6.1-sol`. |
 | `--reasoning LEVEL` | The harness's reasoning effort, instead of its own setting, on this run (a follow-up needs it again): Codex's `model_reasoning_effort`, whose levels depend on the model, and the `--effort` of Claude and agy, `low`, `medium`, `high`, `xhigh` or `max`. A level Claude or agy does not list is refused with exit 2. `review` takes it too. |
 | `--timeout T` | agy's print timeout, `3600s` unless given. |
 | `--force` | Run an edit job in a repository's main checkout, which is refused without it. |
